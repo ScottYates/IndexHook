@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Test · IndexHook{% endblock %}
+{% block body %}
+<h1>Test transcription</h1>
+<p class="hint">Send audio through the same steps as a ring recording. The result page shows what each engine heard.
+Main engine: <b>{{ engine }}</b>. Cross-check: <b>{{ second }}</b>. To compare engines, set a cross-check engine in
+<a href="{{ root }}/settings">Settings</a>, or change the main engine and use "Transcribe again" on the result.</p>
+
+<section class="card narrow">
+  <form method="post" action="{{ root }}/test" enctype="multipart/form-data" id="f">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Audio file <input type="file" name="audio" id="file" accept="audio/*,video/webm,.m4a"></label>
+    <div class="row">
+      <button type="button" class="secondary" id="rec">Record from this device</button>
+      <span id="recstate" class="muted"></span>
+    </div>
+    <label class="inline"><input type="checkbox" name="run_rules" value="1"> also run my rules (sends real emails and notifications)</label>
+    <div class="row"><button>Transcribe</button></div>
+  </form>
+  <p class="hint">A recording saved from the ring is the most useful test. A phone or laptop microphone sounds different from the ring's.</p>
+</section>
+<script>
+(function(){
+  var btn=document.getElementById('rec'), state=document.getElementById('recstate'), file=document.getElementById('file');
+  var rec=null, chunks=[];
+  if(!navigator.mediaDevices||!window.MediaRecorder){btn.disabled=true;state.textContent='Recording needs HTTPS and a current browser.';return;}
+  btn.onclick=function(){
+    if(rec){rec.stop();return;}
+    navigator.mediaDevices.getUserMedia({audio:true}).then(function(stream){
+      chunks=[];rec=new MediaRecorder(stream);
+      rec.ondataavailable=function(e){chunks.push(e.data);};
+      rec.onstop=function(){
+        stream.getTracks().forEach(function(t){t.stop();});
+        var type=(rec.mimeType||'audio/webm').split(';')[0];
+        var ext=type.indexOf('mp4')>=0?'m4a':(type.indexOf('ogg')>=0?'ogg':'webm');
+        var dt=new DataTransfer();dt.items.add(new File(chunks,'recording.'+ext,{type:type}));
+        file.files=dt.files;rec=null;btn.textContent='Record again';state.textContent='Recorded. Press Transcribe.';
+      };
+      rec.start();btn.textContent='Stop';state.textContent='Recording…';
+    }).catch(function(){state.textContent='Microphone access was refused.';});
+  };
+})();
+</script>
+{% endblock %}

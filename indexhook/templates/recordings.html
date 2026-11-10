@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block title %}Recordings · IndexHook{% endblock %}
+{% block body %}
+<h1>Recordings</h1>
+<p>{% if only_review %}<a href="{{ root }}/recordings">Show all</a>{% else %}<a href="{{ root }}/recordings?review=1">Show only those marked for review</a>{% endif %}</p>
+<section class="card">
+{% if recordings %}{{ m.rec_table(recordings, root) }}{% else %}<p class="hint">Nothing here.</p>{% endif %}
+<p class="row">
+  {% if page > 1 %}<a href="{{ root }}/recordings?page={{ page - 1 }}{% if only_review %}&review=1{% endif %}">Newer</a>{% endif %}
+  {% if more %}<a href="{{ root }}/recordings?page={{ page + 1 }}{% if only_review %}&review=1{% endif %}">Older</a>{% endif %}
+</p>
+</section>
+{% endblock %}

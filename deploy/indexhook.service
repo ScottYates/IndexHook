@@ -1,0 +1,24 @@
+[Unit]
+Description=IndexHook (Index ring webhook receiver)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=indexhook
+Group=indexhook
+Environment=INDEXHOOK_DATA_DIR=/var/lib/indexhook
+Environment=INDEXHOOK_HOST=127.0.0.1
+Environment=INDEXHOOK_PORT=8787
+# URL prefix when served under a sub-path, for example /indexhook. Empty for a domain of its own.
+Environment=INDEXHOOK_ROOT_PATH=
+ExecStart=/opt/indexhook/venv/bin/indexhook serve
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/indexhook
+
+[Install]
+WantedBy=multi-user.target

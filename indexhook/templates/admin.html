@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block title %}Admin · IndexHook{% endblock %}
+{% block body %}
+<h1>Admin</h1>
+<p><a href="{{ root }}/admin/defaults">Server defaults for user settings</a> (speech engines, keys, email server)</p>
+
+<section class="card">
+  <h2>Users</h2>
+  <table class="list">
+    <thead><tr><th>User</th><th>Email</th><th>Recordings</th><th>Login</th><th></th></tr></thead>
+    <tbody>
+    {% for u in users %}
+    <tr>
+      <td>{{ u.username }} {% if u.is_admin %}<span class="tag">admin</span>{% endif %}{% if u.disabled %}<span class="tag bad">disabled</span>{% endif %}</td>
+      <td>{{ u.email }}</td>
+      <td>{{ u.n }}</td>
+      <td>{{ "password" if u.password_hash else "proxy only" }}</td>
+      <td>
+        <details><summary>Manage</summary>
+        <form method="post" action="{{ root }}/admin/users/{{ u.id }}" class="row">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          {% if u.disabled %}<button name="act" value="enable" class="secondary">Enable</button>
+          {% else %}<button name="act" value="disable" class="secondary">Disable</button>{% endif %}
+          {% if u.is_admin %}<button name="act" value="demote" class="secondary">Remove admin</button>
+          {% else %}<button name="act" value="promote" class="secondary">Make admin</button>{% endif %}
+          <button name="act" value="delete" class="danger" onclick="return confirm('Delete {{ u.username }} and all their recordings?')">Delete</button>
+        </form>
+        <form method="post" action="{{ root }}/admin/users/{{ u.id }}" class="row">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="password" name="password" placeholder="new password" minlength="8" autocomplete="new-password">
+          <button name="act" value="password" class="secondary">Set password</button>
+        </form>
+        </details>
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <h3>Add a user</h3>
+  <form method="post" action="{{ root }}/admin/users" class="row">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input name="username" placeholder="user name" required>
+    <input type="email" name="email" placeholder="email">
+    <input type="password" name="password" placeholder="password" minlength="8" required autocomplete="new-password">
+    <label class="inline"><input type="checkbox" name="is_admin" value="1"> admin</label>
+    <button>Add</button>
+  </form>
+</section>
+
+<form method="post" action="{{ root }}/admin" class="settings">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  {{ m.fields(sections, "global") }}
+  <div class="sticky"><button>Save server settings</button></div>
+</form>
+{% endblock %}

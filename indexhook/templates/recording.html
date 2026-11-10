@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block title %}Recording · IndexHook{% endblock %}
+{% block head %}{% if busy %}<meta http-equiv="refresh" content="3">{% endif %}{% endblock %}
+{% block body %}
+<p class="crumbs"><a href="{{ root }}/recordings">Recordings</a> / {{ (rec.recorded_at or rec.received_at)|ts }}</p>
+<h1>Recording {{ m.status(rec) }}</h1>
+{% if busy %}<p class="hint">Working. This page reloads by itself.</p>{% endif %}
+{% if rec.error %}<p class="error">{{ rec.error }}</p>{% endif %}
+
+<section class="card">
+  {% if has_audio %}<audio controls preload="metadata" src="{{ root }}/recordings/{{ rec.id }}/audio"></audio>
+  {% else %}<p class="hint">The audio is not stored (not sent, or removed after the retention period).</p>{% endif %}
+  <form method="post" action="{{ root }}/recordings/{{ rec.id }}/act">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Transcript{% if rec.transcript_source %} <small>from: {{ rec.transcript_source }}</small>{% endif %}
+      <textarea name="transcript" rows="5"{% if busy %} disabled{% endif %}>{{ rec.transcript }}</textarea></label>
+    <div class="row">
+      <button name="act" value="save"{% if busy %} disabled{% endif %}>Save correction</button>
+      <label class="inline"><input type="checkbox" name="rerun" value="1"> run the rules on the saved text</label>
+      {% if rec.needs_review %}<button name="act" value="reviewed" class="secondary">Looks right</button>{% endif %}
+    </div>
+  </form>
+  <p class="hint">If a word keeps coming out wrong, add it to <a href="{{ root }}/settings#f_vocabulary">Vocabulary and fixes</a>.</p>
+</section>
+
+<section class="card">
+  <h2>How it was transcribed</h2>
+  {% if detail.notes %}<ul class="notes">{% for n in detail.notes %}<li>{{ n }}</li>{% endfor %}</ul>{% endif %}
+  {% if detail.candidates %}
+  <table class="list">
+    <thead><tr><th>Source</th><th>Text</th></tr></thead>
+    <tbody>
+    {% for c in detail.candidates %}
+    <tr><td class="nowrap">{{ c.engine }}{% if c.model %}<br><small>{{ c.model }}</small>{% endif %}</td>
+        <td>{% if c.error %}<span class="error-text">{{ c.error }}</span>{% else %}{{ c.text or "(empty)" }}{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  <dl class="kv small">
+    {% if detail.agreement is not none and detail.agreement is defined %}<dt>Engine agreement</dt><dd>{{ detail.agreement|pct }}</dd>{% endif %}
+    {% if detail.duration %}<dt>Length</dt><dd>{{ "%.1f"|format(detail.duration) }} s</dd>{% endif %}
+    {% if detail.max_db is not none and detail.max_db is defined %}<dt>Peak level</dt><dd>{{ "%.0f"|format(detail.max_db) }} dB</dd>{% endif %}
+    <dt>Audio clean-up</dt><dd>{{ "applied" if detail.cleaned else "not applied" }}</dd>
+    <dt>Attempts</dt><dd>{{ rec.attempts }}</dd>
+    <dt>Received</dt><dd>{{ rec.received_at|ts }}</dd>
+  </dl>
+  <form method="post" action="{{ root }}/recordings/{{ rec.id }}/act" class="row">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button name="act" value="retranscribe" class="secondary"{% if busy or not has_audio %} disabled{% endif %}>Transcribe again</button>
+    <label class="inline"><input type="checkbox" name="rerun" value="1"> and run the rules</label>
+    <small>Uses your current settings. Useful after changing the engine or vocabulary.</small>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Actions</h2>
+  {% if deliveries %}
+  <table class="list">
+    <thead><tr><th>Rule</th><th>Action</th><th>Result</th><th></th></tr></thead>
+    <tbody>
+    {% for d in deliveries %}
+    <tr><td>{{ d.rule_name }}</td><td>{{ d.action_type }}</td>
+      <td>{% if d.status == "ok" %}<span class="tag ok">sent</span>{% elif d.status == "failed" %}<span class="tag bad">failed</span>{% else %}<span class="tag busy">{{ d.status }}</span>{% endif %}
+          {{ d.detail }} <small>{{ d.updated_at|ts }}</small></td>
+      <td>{% if d.status != "ok" and d.status != "sending" %}
+        <form method="post" action="{{ root }}/deliveries/{{ d.id }}/retry"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="secondary">Retry now</button></form>{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="hint">{% if rec.run_rules %}No rule has run for this recording.{% else %}Rules were not run for this test recording.{% endif %}</p>{% endif %}
+</section>
+
+<form method="post" action="{{ root }}/recordings/{{ rec.id }}/act">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <button name="act" value="delete" class="danger" onclick="return confirm('Delete this recording and its audio?')">Delete recording</button>
+</form>
+{% endblock %}

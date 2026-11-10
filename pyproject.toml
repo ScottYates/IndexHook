@@ -1,0 +1,32 @@
+[project]
+name = "indexhook"
+version = "0.1.0"
+description = "Receives Index ring recordings by webhook, transcribes them, and runs per-user rules."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "starlette>=0.40",
+    "uvicorn>=0.30",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.9",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+test = ["pytest", "aiosmtpd"]
+
+[project.scripts]
+indexhook = "indexhook.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["indexhook"]
+
+[tool.setuptools.package-data]
+indexhook = ["templates/*.html", "static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

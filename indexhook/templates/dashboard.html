@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block body %}
+<h1>Overview</h1>
+
+<section class="card">
+  <h2>Status</h2>
+  <ul class="checks">
+    {% for ok, text in checks %}<li class="{{ 'ok' if ok else 'bad' }}">{{ text }}</li>{% endfor %}
+  </ul>
+</section>
+
+<section class="card">
+  <h2>Webhook</h2>
+  <dl class="kv">
+    <dt>URL</dt><dd><code>{{ hook_url }}</code></dd>
+    <dt>Token</dt>
+    <dd>
+      {% if new_token %}
+        <code class="secret">{{ new_token }}</code>
+        <p class="warn-text">Copy it now. Only a hash is stored, so it cannot be shown again.</p>
+      {% elif user.hook_token_hash %}
+        <code>{{ user.hook_token_hint }}</code>
+      {% else %}none{% endif %}
+    </dd>
+  </dl>
+  <form method="post" action="{{ root }}/token" class="row">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button{% if user.hook_token_hash %} class="secondary"{% endif %}>{{ "Replace the token" if user.hook_token_hash else "Create a token" }}</button>
+    {% if user.hook_token_hash %}<small>Replacing it stops the old token at once. Update the ring app afterwards.</small>{% endif %}
+  </form>
+</section>
+
+<section class="card">
+  <h2>Ring setup (Pebble app on Android)</h2>
+  <ol class="steps">
+    <li>Open the Pebble app and go to the <b>Index</b> tab, then open its settings.</li>
+    <li>Find the <b>Webhook</b> section. Set <b>Webhook URL</b> to <code>{{ hook_url }}</code></li>
+    <li>Under <b>Headers</b> add one header. Name: <code>X-Hook-Token</code>. Value: your token{% if new_token %} (<code>{{ new_token }}</code>){% endif %}.
+      <br><small><code>Authorization</code> with the value <code>Bearer &lt;token&gt;</code> works too. Behind YunoHost use <code>X-Hook-Token</code>, because its single sign-on layer can change the Authorization header.</small></li>
+    <li>Set <b>Send</b> to <b>both</b> (recording and transcription). The recording is what gets transcribed here. The ring's own transcript is kept as a fallback.</li>
+    <li>Set <b>Trigger</b> to the button combination you want, or to all triggers. The Index agent still runs for each recording, so choosing a dedicated combination avoids double handling.</li>
+    <li>Make a short recording. It should appear under <a href="{{ root }}/recordings">Recordings</a> within a few seconds.</li>
+  </ol>
+  <p class="hint">The app allows a single webhook. To check the server without the ring, use the <a href="{{ root }}/test">Test</a> page.</p>
+</section>
+
+<section class="card">
+  <h2>Latest recordings</h2>
+  {% if recordings %}{{ m.rec_table(recordings, root) }}<p><a href="{{ root }}/recordings">All recordings</a></p>
+  {% else %}<p class="hint">Nothing received yet.</p>{% endif %}
+</section>
+{% endblock %}

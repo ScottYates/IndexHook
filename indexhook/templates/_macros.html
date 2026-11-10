@@ -1,0 +1,60 @@
+{% macro status(rec) -%}
+  {%- if rec.status == "done" %}<span class="tag ok">done</span>
+  {%- elif rec.status == "empty" %}<span class="tag">silent</span>
+  {%- elif rec.status == "failed" %}<span class="tag bad">no transcript</span>
+  {%- else %}<span class="tag busy">{{ rec.status }}</span>{% endif -%}
+  {%- if rec.needs_review %} <span class="tag warn">review</span>{% endif -%}
+  {%- if rec.source == "test" %} <span class="tag">test</span>{% endif -%}
+{%- endmacro %}
+
+{% macro rec_table(recordings, root) %}
+<table class="list">
+  <thead><tr><th>When</th><th>Transcript</th><th>Status</th></tr></thead>
+  <tbody>
+  {% for r in recordings %}
+  <tr>
+    <td class="nowrap"><a href="{{ root }}/recordings/{{ r.id }}">{{ (r.recorded_at or r.received_at)|ts }}</a></td>
+    <td>{{ r.transcript|truncate(140) if r.transcript else (r.error or "—") }}</td>
+    <td class="nowrap">{{ status(r) }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endmacro %}
+
+{% macro fields(sections, mode) %}
+{% for section, rows in sections.items() %}
+<fieldset>
+  <legend>{{ section }}</legend>
+  {% for r in rows %}{% set f = r.f %}
+  <div class="field">
+    <label for="f_{{ f.key }}">{{ f.label }}</label>
+    <div>
+    {% if f.kind == "select" %}
+      <select id="f_{{ f.key }}" name="{{ f.key }}">
+        <option value="">{{ "Server default" if mode == "user" else "Default" }} ({{ r.fallback }})</option>
+        {% for v, label in f.choices %}<option value="{{ v }}"{% if r.own == v %} selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+    {% elif f.kind == "bool" %}
+      <select id="f_{{ f.key }}" name="{{ f.key }}">
+        <option value="">{{ "Server default" if mode == "user" else "Default" }} ({{ r.fallback }})</option>
+        <option value="1"{% if r.own == "1" %} selected{% endif %}>On</option>
+        <option value="0"{% if r.own == "0" %} selected{% endif %}>Off</option>
+      </select>
+    {% elif f.kind == "textarea" %}
+      <textarea id="f_{{ f.key }}" name="{{ f.key }}" rows="5" placeholder="{{ r.fallback }}">{{ r.own }}</textarea>
+    {% elif f.kind == "secret" %}
+      <input id="f_{{ f.key }}" type="password" name="{{ f.key }}" autocomplete="new-password"
+             placeholder="{% if r.is_set %}saved; type to replace{% elif mode == 'user' and r.has_fallback %}using the server's key{% else %}not set{% endif %}">
+      {% if r.is_set %}<label class="inline"><input type="checkbox" name="clear_{{ f.key }}" value="1"> remove the saved value</label>{% endif %}
+    {% else %}
+      <input id="f_{{ f.key }}" name="{{ f.key }}" value="{{ r.own }}" placeholder="{{ r.fallback }}"
+             {% if f.kind == "int" %}inputmode="numeric" pattern="-?[0-9]*"{% endif %}>
+    {% endif %}
+    {% if f.help %}<small>{{ f.help }}</small>{% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</fieldset>
+{% endfor %}
+{% endmacro %}

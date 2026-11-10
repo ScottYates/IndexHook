@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="same-origin">
+<title>{% block title %}IndexHook{% endblock %}</title>
+<link rel="stylesheet" href="{{ root }}/static/style.css">
+{% block head %}{% endblock %}
+</head>
+<body>
+<header>
+  <a class="brand" href="{{ root }}/">IndexHook</a>
+  {% if user %}
+  <nav>
+    {% for href, label in [("/", "Overview"), ("/recordings", "Recordings"), ("/rules", "Rules"), ("/settings", "Settings"), ("/test", "Test")] %}
+    <a href="{{ root }}{{ href }}"{% if path == href or (href != "/" and path.startswith(href)) %} class="on"{% endif %}>{{ label }}</a>
+    {% endfor %}
+    {% if user.is_admin %}<a href="{{ root }}/admin"{% if path.startswith("/admin") %} class="on"{% endif %}>Admin</a>{% endif %}
+  </nav>
+  <div class="who">
+    <a href="{{ root }}/account">{{ user.username }}</a>
+    {% if not via_header %}
+    <form method="post" action="{{ root }}/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="link">Log out</button></form>
+    {% endif %}
+  </div>
+  {% endif %}
+</header>
+<main>
+{% if msg %}<p class="flash">{{ msg }}</p>{% endif %}
+{% block body %}{% endblock %}
+</main>
+</body>
+</html>

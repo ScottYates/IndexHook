@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Rules · IndexHook{% endblock %}
+{% block body %}
+<h1>Rules</h1>
+<p class="hint">Rules are checked from top to bottom against the transcript. Phrase matching ignores case and punctuation.</p>
+
+{% if edit is not none %}
+{% set c = edit.config %}
+<section class="card">
+  <h2>{{ "Edit rule" if edit.id else "New rule" }}</h2>
+  <form method="post" action="{{ root }}/rules/save" class="settings">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ edit.id }}">
+    <div class="field"><label for="r_name">Name</label><div><input id="r_name" name="name" value="{{ edit.name }}" required></div></div>
+    <div class="field"><label for="r_mt">When the transcript</label><div>
+      <select id="r_mt" name="match_type">{% for v, l in match_types %}<option value="{{ v }}"{% if edit.match_type == v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></div></div>
+    <div class="field"><label for="r_pat">Phrases</label><div>
+      <textarea id="r_pat" name="pattern" rows="4">{{ edit.pattern }}</textarea>
+      <small>One per line. Any one of them matches. List the ways the engine tends to hear your trigger, for example "note to self" and "notes to self". Not used for "Always".</small></div></div>
+    <div class="field"><label>Options</label><div>
+      <label class="inline"><input type="checkbox" name="strip_trigger" value="1"{% if edit.strip_trigger %} checked{% endif %}> remove the starting phrase from the text that is sent</label><br>
+      <label class="inline"><input type="checkbox" name="stop" value="1"{% if edit.stop %} checked{% endif %}> stop checking further rules after this one matches</label><br>
+      <label class="inline"><input type="checkbox" name="enabled" value="1"{% if edit.enabled %} checked{% endif %}> enabled</label></div></div>
+    <div class="field"><label for="r_at">Then</label><div>
+      <select id="r_at" name="action_type" onchange="showAction()">{% for v, l in action_types %}<option value="{{ v }}"{% if edit.action_type == v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></div></div>
+
+    <div data-action="email">
+      <div class="field"><label>To</label><div><input name="cfg_email_to" value="{{ c.to or '' }}" placeholder="your address from Settings"></div></div>
+      <div class="field"><label>Subject</label><div><input name="cfg_email_subject" value="{{ c.subject or '' }}" placeholder="{first_words}"></div></div>
+      <div class="field"><label>Audio</label><div><label class="inline"><input type="checkbox" name="cfg_email_attach_audio" value="1"{% if c.attach_audio %} checked{% endif %}> attach the recording</label>
+        <small>The recording is always attached when there is no transcript.</small></div></div>
+    </div>
+    <div data-action="ntfy">
+      <div class="field"><label>Topic</label><div><input name="cfg_ntfy_topic" value="{{ c.topic or '' }}" placeholder="default topic from Settings"></div></div>
+      <div class="field"><label>Title</label><div><input name="cfg_ntfy_title" value="{{ c.title or '' }}" placeholder="{rule}"></div></div>
+      <div class="field"><label>Priority</label><div><input name="cfg_ntfy_priority" value="{{ c.priority or '' }}" placeholder="3" inputmode="numeric"><small>1 (lowest) to 5 (highest).</small></div></div>
+    </div>
+    <div data-action="webhook">
+      <div class="field"><label>URL</label><div><input name="cfg_webhook_url" value="{{ c.url or '' }}" placeholder="https://…"></div></div>
+      <div class="field"><label>Headers</label><div><textarea name="cfg_webhook_headers" rows="2" placeholder="Authorization: Bearer …">{{ c.headers or '' }}</textarea>
+        <small>One "Name: value" per line. The body is JSON with text, full_text, first_words, date, time, rule, user, recording_id, recorded_at and needs_review.</small></div></div>
+    </div>
+    <p class="hint">Subject and title can use {text}, {first_words}, {date}, {time}, {rule} and {user}.</p>
+    <div class="row"><button>Save rule</button> <a href="{{ root }}/rules">Cancel</a></div>
+  </form>
+</section>
+<script>
+function showAction(){var v=document.getElementById('r_at').value;
+  document.querySelectorAll('[data-action]').forEach(function(e){e.hidden=e.dataset.action!==v;});}
+showAction();
+</script>
+{% endif %}
+
+<section class="card">
+  <table class="list">
+    <thead><tr><th>#</th><th>Rule</th><th>When</th><th>Then</th><th></th></tr></thead>
+    <tbody>
+    {% for r in rules %}
+    <tr{% if not r.enabled %} class="off"{% endif %}>
+      <td>{{ loop.index }}</td>
+      <td><a href="{{ root }}/rules?edit={{ r.id }}">{{ r.name }}</a>{% if not r.enabled %} <span class="tag">off</span>{% endif %}</td>
+      <td>{{ dict(match_types)[r.match_type] }}{% if r.match_type != "always" %}: <span class="muted">{{ r.pattern.splitlines()|join(" · ") }}</span>{% endif %}
+          {% if not r.stop %}<br><small>continues to the next rule</small>{% endif %}</td>
+      <td>{{ dict(action_types)[r.action_type] }}</td>
+      <td class="nowrap">
+        <form method="post" action="{{ root }}/rules/{{ r.id }}" class="row tight">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button name="act" value="up" class="secondary" title="Move up"{% if loop.first %} disabled{% endif %}>↑</button>
+          <button name="act" value="down" class="secondary" title="Move down"{% if loop.last %} disabled{% endif %}>↓</button>
+          <button name="act" value="delete" class="danger" onclick="return confirm('Delete this rule?')">Delete</button>
+        </form>
+      </td>
+    </tr>
+    {% else %}<tr><td colspan="5" class="muted">No rules yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p><a class="button" href="{{ root }}/rules?edit=new">Add a rule</a></p>
+</section>
+
+<section class="card">
+  <h2>Try a phrase</h2>
+  <form method="post" action="{{ root }}/rules" class="row">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input name="phrase" value="{{ phrase }}" placeholder="Note to self, buy milk" class="grow">
+    <button class="secondary">Check</button>
+  </form>
+  {% if tested is not none %}
+    {% if tested %}
+    <ul>{% for t in tested %}<li><b>{{ t.rule.name }}</b> would run "{{ dict(action_types)[t.rule.action_type] }}" with the text: <q>{{ t.text }}</q></li>{% endfor %}</ul>
+    {% else %}<p>No rule matches. Nothing would be sent.</p>{% endif %}
+    <p class="hint">Nothing was sent. This only shows which rules match.</p>
+  {% endif %}
+</section>
+{% endblock %}
