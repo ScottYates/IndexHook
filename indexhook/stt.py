@@ -213,6 +213,82 @@ async def _minimax(client, s: Settings, path: Path, mime: str, terms: list[str])
     return Candidate("minimax", model, (r.json().get("text") or "").strip())
 
 
+# Gemini wants language codes with a region. Short codes are mapped for the common cases;
+# a code that is not listed here and has no region is left out, so the model detects it.
+GOOGLE_REGIONS = {"en": "en-US", "es": "es-ES", "fr": "fr-FR", "de": "de-DE", "it": "it-IT",
+                  "pt": "pt-BR", "nl": "nl-NL", "sv": "sv-SE", "da": "da-DK", "nb": "nb-NO",
+                  "fi": "fi-FI", "pl": "pl-PL", "cs": "cs-CZ", "ru": "ru-RU", "uk": "uk-UA",
+                  "tr": "tr-TR", "ja": "ja-JP", "ko": "ko-KR", "zh": "cmn-Hans-CN", "hi": "hi-IN",
+                  "ar": "ar-XA", "he": "he-IL", "id": "id-ID", "vi": "vi-VN", "th": "th-TH",
+                  "el": "el-GR", "hu": "hu-HU", "ro": "ro-RO"}
+GOOGLE_MIME = {"audio/mp4": "audio/m4a", "audio/x-m4a": "audio/m4a", "video/webm": "audio/webm",
+               "audio/x-wav": "audio/wav"}
+
+
+async def _google(client, s: Settings, path: Path, mime: str, terms: list[str]) -> Candidate:
+    """Gemini 3.5 Transcribe: upload through the Files API, then one Interactions request."""
+    model = s.get("google_model")
+    key = s.get("google_api_key")
+    if not key:
+        raise EngineError("no API key is set for Google", False)
+    base = s.get("google_base_url").rstrip("/")
+    auth = {"x-goog-api-key": key}
+    mime = GOOGLE_MIME.get(mime, mime)
+    data = path.read_bytes()
+
+    # 1. Resumable upload: a start request returns the URL the bytes go to.
+    r = await client.post(
+        base + "/upload/v1beta/files", json={"file": {"display_name": path.name}},
+        headers={**auth, "X-Goog-Upload-Protocol": "resumable", "X-Goog-Upload-Command": "start",
+                 "X-Goog-Upload-Header-Content-Length": str(len(data)),
+                 "X-Goog-Upload-Header-Content-Type": mime})
+    _check(r, "google")
+    upload_url = r.headers.get("x-goog-upload-url")
+    if not upload_url:
+        raise EngineError("google did not return an upload address")
+    r = await client.post(upload_url, content=data,
+                          headers={"X-Goog-Upload-Offset": "0", "X-Goog-Upload-Command": "upload, finalize"})
+    _check(r, "google")
+    try:
+        file = r.json()["file"]
+        uri = file["uri"]
+    except (KeyError, TypeError, ValueError):
+        raise EngineError("google returned no file address after the upload")
+
+    try:
+        # 2. Transcribe.
+        tc: dict = {}
+        lang = s.get("stt_language")
+        code = lang if "-" in lang else GOOGLE_REGIONS.get(lang.lower())
+        if code:
+            tc["language_codes"] = [code]
+        if terms:
+            tc["custom_vocabulary"] = terms[:1000]
+        if s.get("google_mode") == "smart":
+            tc["mode"] = "smart"
+        body: dict = {"model": model, "store": False,
+                      "input": [{"type": "audio", "uri": uri, "mime_type": mime}]}
+        if tc:
+            body["generation_config"] = {"transcription_config": tc}
+        r = await client.post(base + "/v1beta/interactions", json=body, headers=auth)
+        _check(r, "google")
+        j = r.json()
+        parts = [c.get("text", "") for step in j.get("steps") or [] if step.get("type") == "model_output"
+                 for c in step.get("content") or [] if c.get("type") == "text"]
+        if not parts and isinstance(j.get("output_text"), str):
+            parts = [j["output_text"]]
+        if j.get("status") not in (None, "completed"):
+            raise EngineError(f"google finished with status {j.get('status')}")
+        return Candidate("google", model, " ".join(p.strip() for p in parts if p).strip())
+    finally:
+        # 3. Remove the uploaded copy. Google deletes it after 48 hours anyway.
+        try:
+            if file.get("name"):
+                await client.delete(f"{base}/v1beta/{file['name']}", headers=auth)
+        except httpx.HTTPError:
+            pass
+
+
 async def _elevenlabs(client, s: Settings, path: Path, mime: str, terms: list[str]) -> Candidate:
     model = s.get("elevenlabs_model")
     key = s.get("elevenlabs_api_key")
@@ -255,7 +331,7 @@ async def _deepgram(client, s: Settings, path: Path, mime: str, terms: list[str]
     return Candidate("deepgram", model, (alt.get("transcript") or "").strip(), alt.get("confidence"))
 
 
-ENGINE_FUNCS = {"minimax": _minimax, "openai": _openai, "elevenlabs": _elevenlabs,
+ENGINE_FUNCS = {"minimax": _minimax, "google": _google, "openai": _openai, "elevenlabs": _elevenlabs,
                 "deepgram": _deepgram, "groq": _groq, "local": _local}
 
 

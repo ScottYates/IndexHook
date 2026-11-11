@@ -15,6 +15,7 @@ from .db import DB
 # Speech engines, in the order "Automatic" tries them.
 ENGINES = [
     ("minimax", "MiniMax"),
+    ("google", "Google Gemini Transcribe"),
     ("openai", "OpenAI"),
     ("elevenlabs", "ElevenLabs Scribe"),
     ("deepgram", "Deepgram"),
@@ -74,6 +75,8 @@ FIELDS: list[Field] = [
         Field("minimax_api_key", "MiniMax API key", "secret",
               help="Speech recognition, and the correction pass if you choose MiniMax for it. "
                    "From platform.minimax.io, Account, API Keys."),
+        Field("google_api_key", "Google Gemini API key", "secret",
+              help="Speech recognition with Gemini 3.5 Transcribe. From aistudio.google.com, Get API key."),
         Field("openai_api_key", "OpenAI API key", "secret",
               help="Speech recognition and the correction pass. From platform.openai.com."),
         Field("claude_api_key", "Claude API key", "secret",
@@ -88,6 +91,13 @@ FIELDS: list[Field] = [
             Field("minimax_model", "MiniMax speech model", "text", "asr-1.0"),
             Field("minimax_chat_model", "MiniMax text model", "text", "MiniMax-M3",
                   help="Used for the correction pass."),
+            Field("google_model", "Google speech model", "text", "gemini-3.5-transcribe"),
+            Field("google_mode", "Google transcript style", "select", "verbatim",
+                  choices=[("verbatim", "Word for word"), ("smart", "Cleaned up (smart mode)")],
+                  help="Smart mode drops filler words, keeps only the corrected version when you "
+                       "correct yourself, and tidies the grammar. Word for word is the safer "
+                       "choice for trigger phrases."),
+            Field("google_base_url", "Google base URL", "text", "https://generativelanguage.googleapis.com"),
             Field("openai_base_url", "OpenAI base URL", "text", "https://api.openai.com/v1"),
             Field("openai_model", "OpenAI speech model", "text", "gpt-4o-transcribe"),
             Field("openai_chat_model", "OpenAI text model", "text", "gpt-4o-mini",
@@ -204,6 +214,7 @@ GLOBAL_FIELDS = [f for f in FIELDS if f.scope == "global"]
 SECRET_GUARDS = {
     "openai_api_key": ["openai_base_url"],
     "minimax_api_key": ["minimax_base_url"],
+    "google_api_key": ["google_base_url"],
     "claude_api_key": ["claude_base_url"],
     "local_api_key": ["local_base_url"],
     "llm_api_key": ["llm_base_url"],

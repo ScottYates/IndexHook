@@ -37,7 +37,8 @@ class FakeWorld:
 
     def __init__(self):
         self.calls = []
-        self.texts = {"minimax": "Note to self, call Shivani about the YunoHost upgrade.",
+        self.texts = {"google": "Note to self, call Shivani about the YunoHost upgrade.",
+                      "minimax": "Note to self, call Shivani about the YunoHost upgrade.",
                       "openai": "Note to self, call Shivani about the Yunohost upgrade.",
                       "elevenlabs": "Note to self, call Shivani about the YunoHost upgrade.",
                       "deepgram": "Note to self call Shivani about the YunoHost upgrade"}
@@ -47,8 +48,20 @@ class FakeWorld:
     def handler(self, request: httpx.Request) -> httpx.Response:
         host, path = request.url.host, request.url.path
         body = request.content
-        self.calls.append({"host": host, "path": path, "query": str(request.url.query, "ascii"),
+        self.calls.append({"host": host, "path": path, "method": request.method, "query": str(request.url.query, "ascii"),
                            "headers": dict(request.headers), "body": body})
+        if host == "generativelanguage.googleapis.com":
+            if self.status.get("google", 200) != 200:
+                return httpx.Response(self.status["google"], json={"error": {"code": 400, "message": "API key not valid.", "status": "INVALID_ARGUMENT"}})
+            if path == "/upload/v1beta/files" and "upload_id" not in str(request.url):
+                return httpx.Response(200, json={}, headers={
+                    "x-goog-upload-url": "https://generativelanguage.googleapis.com/upload/v1beta/files?upload_id=u1"})
+            if path == "/upload/v1beta/files":
+                return httpx.Response(200, json={"file": {"name": "files/abc", "uri": "https://generativelanguage.googleapis.com/v1beta/files/abc"}})
+            if path == "/v1beta/interactions":
+                return httpx.Response(200, json={"id": "interactions/1", "status": "completed", "steps": [
+                    {"type": "model_output", "content": [{"type": "text", "text": self.texts["google"]}]}]})
+            return httpx.Response(200, json={})
         if path.endswith("/speech_to_text"):
             return self._stt("minimax", {"text": self.texts["minimax"], "duration": 2.0, "trace_id": "t"})
         if path.endswith("/audio/transcriptions"):

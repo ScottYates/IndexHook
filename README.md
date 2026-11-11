@@ -107,6 +107,7 @@ Speech engines:
 | Service | Needs | Vocabulary is sent as | Notes |
 | --- | --- | --- | --- |
 | MiniMax | API key | not sent | Model `asr-1.0`. The API has no vocabulary or prompt parameter. Language is sent only when it is one MiniMax lists; otherwise the service detects it. Limits: 500 seconds and 50 MB per recording |
+| Google Gemini Transcribe | API key | `custom_vocabulary` | Model `gemini-3.5-transcribe` (public preview). The audio is uploaded through Google's Files API, transcribed with one Interactions request that is not stored (`store: false`), and the uploaded copy is deleted afterwards. An optional "smart" style (under Advanced) drops filler words and resolves self-corrections |
 | OpenAI | API key | a prompt | Model `gpt-4o-transcribe` |
 | ElevenLabs Scribe | API key | `keyterms` | Model `scribe_v2`. ElevenLabs bills keyterms as an extra |
 | Deepgram | API key | `keyterm` | Model `nova-3` |
@@ -243,5 +244,5 @@ To add a speech engine, write one function in `stt.py`, add it to `ENGINE_FUNCS`
 
 - The webhook request does not say which button combination was used, so rules can only match on the text.
 - The ring's behaviour on a slow or failed webhook response is not documented. IndexHook answers fast and ignores duplicates by `recordedAt`.
-- The service integrations follow each vendor's published API. They are tested against fakes that check the request format. Each live endpoint was also called with an invalid key and answered "wrong key", which confirms the address and the way the key is sent. No call with a valid key has been made yet, so the first real check is **Save and test** with your own key.
+- The service integrations follow each vendor's published API. They are tested against fakes that check the request format. Each live endpoint was also called with an invalid key and answered "wrong key", which confirms the address and the way the key is sent. No call with a valid key has been made yet, so the first real check is **Save and test** with your own key. The Google endpoint could not be reached from the build environment, so it has only been tested against a fake.
 - An action that was being sent at the moment of a crash is sent again after restart, so a note can arrive twice in that case.

@@ -296,6 +296,8 @@ def test_automatic_engine_uses_the_first_service_with_a_key(client, world, smtp,
     assert stt.resolve_engine(Settings(client.db, uid)) == "openai"
     set_user(client, uid, deepgram_api_key="dg")
     assert stt.resolve_engine(Settings(client.db, uid)) == "openai"
+    set_user(client, uid, google_api_key="g")
+    assert stt.resolve_engine(Settings(client.db, uid)) == "google"
     set_user(client, uid, minimax_api_key="mm")             # MiniMax comes first in the order
     assert stt.resolve_engine(Settings(client.db, uid)) == "minimax"
     rec = wait_done(client, ring_post(client, token, tone).json()["id"])
@@ -406,3 +408,49 @@ def test_advanced_fields_are_folded_and_partial_forms_keep_other_values(client, 
     # once an advanced value is set, its block opens so the value is not hidden
     set_user(client, uid, minimax_model="asr-2.0")
     assert '<details class="advanced" open>' in client.get("/settings").text
+
+
+def test_google_gemini_transcribe(client, world, smtp, tone):
+    import json
+    csrf, token, uid = setup_user(client, smtp, stt_engine="google", google_api_key="g-key",
+                                  vocabulary="Shivani\nYunoHost")
+    rec = wait_done(client, ring_post(client, token, tone, recorded_at=1).json()["id"])
+    assert rec["status"] == "done" and rec["transcript_source"] == "google"
+    assert rec["transcript"] == world.texts["google"]
+    start, upload, interact, delete = world.to("generativelanguage.googleapis.com")
+    assert start["path"] == "/upload/v1beta/files" and start["headers"]["x-goog-api-key"] == "g-key"
+    assert start["headers"]["x-goog-upload-protocol"] == "resumable"
+    assert start["headers"]["x-goog-upload-command"] == "start"
+    assert start["headers"]["x-goog-upload-header-content-type"] == "audio/flac"
+    assert int(start["headers"]["x-goog-upload-header-content-length"]) == len(upload["body"])
+    assert "upload_id=u1" in upload["query"] and upload["body"][:4] == b"fLaC"
+    assert upload["headers"]["x-goog-upload-command"] == "upload, finalize"
+    assert "x-goog-api-key" not in upload["headers"]        # the key is not sent to the upload address
+    body = json.loads(interact["body"])
+    assert interact["path"] == "/v1beta/interactions" and body["model"] == "gemini-3.5-transcribe"
+    assert body["store"] is False
+    assert body["input"] == [{"type": "audio", "mime_type": "audio/flac",
+                              "uri": "https://generativelanguage.googleapis.com/v1beta/files/abc"}]
+    assert body["generation_config"]["transcription_config"] == {
+        "language_codes": ["en-US"], "custom_vocabulary": ["Shivani", "YunoHost"]}
+    assert delete["method"] == "DELETE" and delete["path"] == "/v1beta/files/abc"
+
+
+def test_google_smart_mode_and_unmapped_language(client, world, smtp, tone):
+    import json
+    csrf, token, uid = setup_user(client, smtp, stt_engine="google", google_api_key="g-key",
+                                  google_mode="smart", stt_language="xx", audio_cleanup="0")
+    wait_done(client, ring_post(client, token, tone, recorded_at=2).json()["id"])
+    calls = world.to("generativelanguage.googleapis.com")
+    body = json.loads(calls[2]["body"])
+    assert body["generation_config"]["transcription_config"] == {"mode": "smart"}
+    assert body["input"][0]["mime_type"] == "audio/m4a"     # the ring's audio/mp4, under Google's name
+
+
+def test_google_bad_key_is_reported_and_not_retried(client, world, smtp, tone):
+    csrf, token, uid = setup_user(client, smtp, stt_engine="google", google_api_key="bad")
+    world.status["google"] = 400
+    rec = wait_done(client, ring_post(client, token, tone, recorded_at=3).json()["id"])
+    assert rec["transcript_source"] == "ring" and rec["attempts"] == 1
+    err = [c for c in detail(rec)["candidates"] if c["engine"] == "google"][0]["error"]
+    assert err == "google answered HTTP 400: API key not valid."
