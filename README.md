@@ -39,7 +39,7 @@ venv/bin/indexhook --data-dir ./data serve --port 8787
 
 Open `http://127.0.0.1:8787/`. The first account you create is the admin. Then:
 
-1. **Settings**: enter an API key for a speech engine, and the email (SMTP) details.
+1. **Settings**: paste one API key under **AI services** and press **Save and test**. The page reports whether the key works. Fill in the email (SMTP) details in the same step; the test also sends a test email.
 2. **Overview**: create a webhook token. It is shown once.
 3. **Test**: upload or record a clip and check the transcript.
 4. Set up the ring (next section).
@@ -92,22 +92,43 @@ Each recording goes through these steps. All of them are set per user under **Se
 
 1. **Measure.** ffmpeg reads the file and reports its length and peak level. A recording quieter than the silence threshold (default -50 dB) is marked "silent" and no engine is called. Speech engines tend to invent text for silent audio.
 2. **Clean up** (on by default). The audio is converted to 16 kHz mono FLAC with a 70 Hz high-pass filter and loudness normalisation. The filter chain is mild. Strong noise suppression removes consonants and makes recognition worse.
-3. **Transcribe.** The main engine gets the audio along with your language, your vocabulary and your context sentence. If a cross-check engine is set, it runs at the same time on the same audio.
+3. **Transcribe.** The engine gets the audio along with your language, your vocabulary and your context sentence. If a cross-check engine is set, it runs at the same time on the same audio.
 4. **Compare.** When two engines agree on less than 85% of the words, the recording is marked for review.
-5. **Correct** (optional). A chat model gets every transcript of the recording (main, cross-check, the ring's own) and your vocabulary. It is told to change a word only where another transcript or the vocabulary shows a mishearing. If its answer is less than 60% similar to the main transcript, the answer is dropped.
+5. **Correct** (optional). A text model (MiniMax, Claude, OpenAI or your own server) gets every transcript of the recording (engine, cross-check, the ring's own) and your vocabulary. It is told to change a word only where another transcript or the vocabulary shows a mishearing. If its answer is less than 60% similar to the engine's transcript, the answer is dropped.
 6. **Apply fixes.** Lines written as `heard => meant` in the vocabulary box are replaced in the final text.
 7. **Fall back.** If every engine fails, the recording is retried (after 20 s, 90 s and 5 min for outages; not at all for a rejected API key). If there is still nothing, the ring's own transcript is used and the recording is marked for review. If there is no transcript of any kind, "always" rules still run and the email action attaches the audio.
 
-### Engines
+### Services
 
-| Engine | Setting | Vocabulary is sent as | Notes |
+Setting up a service takes one step: paste its API key under **Settings, AI services**. Base URLs and model names have working defaults and sit under "Advanced". **Save and test** sends each service that has a key a one-second test clip (or a one-line question for text models) and shows the answer or the error.
+
+Speech engines:
+
+| Service | Needs | Vocabulary is sent as | Notes |
 | --- | --- | --- | --- |
-| MiniMax ASR | `minimax` | not sent | Default model `asr-1.0` at `https://api.minimax.io/v1`. The API has no vocabulary or prompt parameter. Language is sent only when it is one MiniMax lists; otherwise the service detects it. Limits: 500 seconds and 50 MB per recording |
-| OpenAI-compatible | `openai` | a prompt | Works with OpenAI (`gpt-4o-transcribe`), Groq (`whisper-large-v3`), and local servers that implement `/v1/audio/transcriptions`, such as speaches or whisper.cpp |
-| ElevenLabs Scribe | `elevenlabs` | `keyterms` | Default model `scribe_v2`. ElevenLabs bills keyterms as an extra |
-| Deepgram | `deepgram` | `keyterm` | Default model `nova-3` |
+| MiniMax | API key | not sent | Model `asr-1.0`. The API has no vocabulary or prompt parameter. Language is sent only when it is one MiniMax lists; otherwise the service detects it. Limits: 500 seconds and 50 MB per recording |
+| OpenAI | API key | a prompt | Model `gpt-4o-transcribe` |
+| ElevenLabs Scribe | API key | `keyterms` | Model `scribe_v2`. ElevenLabs bills keyterms as an extra |
+| Deepgram | API key | `keyterm` | Model `nova-3` |
+| Groq | API key | a prompt | Hosted Whisper, model `whisper-large-v3` |
+| Own server | URL (under Advanced) | a prompt | Any server that implements `/v1/audio/transcriptions`, such as speaches or whisper.cpp |
 
-To use MiniMax: under **Settings**, set **Main engine** (or **Cross-check engine**) to MiniMax ASR, and enter your key in the **MiniMax engine** section. Base URL and model can be changed there too. An admin can set the same fields once for everyone under **Admin, Server defaults**. The same MiniMax key also works for the correction pass: set its chat API base URL to `https://api.minimax.io/v1` and pick a MiniMax chat model. Since MiniMax ASR takes no vocabulary, the correction pass and `heard => meant` lines are the ways to fix names with this engine.
+**Engine** is set to **Automatic** by default: the first service in the table that has a key does the transcription. Choose a specific one when you have several keys.
+
+Text models for the correction pass:
+
+| Service | Needs | Default model |
+| --- | --- | --- |
+| MiniMax | the same MiniMax key | `MiniMax-M3` |
+| Claude | API key | `claude-haiku-5-5` |
+| OpenAI | the same OpenAI key | `gpt-4o-mini` |
+| Own server | URL and model (under Advanced) | none |
+
+Claude is offered for the correction pass only. The Claude API accepts text and images, not audio, so it cannot transcribe a recording by itself. With a speech engine in front of it, Claude reads the transcripts and fixes misheard words.
+
+With only a MiniMax key: MiniMax transcribes, and setting **Correction pass** to MiniMax makes its text model apply your vocabulary. This matters because MiniMax speech recognition takes no vocabulary hints.
+
+An admin can enter keys once for everyone under **Admin, Server defaults**.
 
 Published benchmarks disagree on which engine is the most accurate, and none of them used ring recordings. The Test page is there to answer the question with your own voice and your own microphone.
 
@@ -118,7 +139,7 @@ Published benchmarks disagree on which engine is the most accurate, and none of 
 - Fill in the vocabulary: names of people, places, products and projects you mention. This has the largest effect on proper nouns.
 - Add a context sentence, for example "Short personal reminders about home, family and server administration."
 - Set a cross-check engine from a different vendor. Two engines rarely make the same mistake, so a disagreement is a good sign that a recording needs a look.
-- Turn on the correction pass if you see the engines disagree often.
+- Turn on the correction pass if you see the engines disagree often, or if your engine takes no vocabulary (MiniMax).
 - When the same mishearing keeps coming back, add a `heard => meant` line. This is also the fix for a trigger phrase that is misheard, for example `no to self => note to self`.
 - Compare "Clean up audio" on and off on the Test page before changing it.
 
@@ -222,5 +243,5 @@ To add a speech engine, write one function in `stt.py`, add it to `ENGINE_FUNCS`
 
 - The webhook request does not say which button combination was used, so rules can only match on the text.
 - The ring's behaviour on a slow or failed webhook response is not documented. IndexHook answers fast and ignores duplicates by `recordedAt`.
-- The engine integrations follow each vendor's published API and are tested against fakes that check the request format. They have not been run against the live services yet. Use the Test page after entering a key.
+- The service integrations follow each vendor's published API. They are tested against fakes that check the request format. Each live endpoint was also called with an invalid key and answered "wrong key", which confirms the address and the way the key is sent. No call with a valid key has been made yet, so the first real check is **Save and test** with your own key.
 - An action that was being sent at the moment of a crash is sent again after restart, so a note can arrive twice in that case.

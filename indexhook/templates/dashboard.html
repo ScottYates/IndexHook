@@ -6,7 +6,7 @@
 <section class="card">
   <h2>Status</h2>
   <ul class="checks">
-    {% for ok, text in checks %}<li class="{{ 'ok' if ok else 'bad' }}">{{ text }}</li>{% endfor %}
+    {% for c in checks %}<li class="{{ 'ok' if c[0] else 'bad' }}">{{ c[1] }}{% if c[2] is defined %} <a href="{{ root }}{{ c[2] }}">Fix</a>{% endif %}</li>{% endfor %}
   </ul>
 </section>
 

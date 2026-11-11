@@ -83,3 +83,6 @@ code.secret { user-select: all; border: 1px dashed var(--warn); }
 audio { width: 100%; margin-bottom: .9rem; }
 details summary { cursor: pointer; color: var(--accent); }
 q { font-style: italic; }
+details.advanced { margin-top: .6rem; border-top: 1px solid var(--line); padding-top: .6rem; }
+details.advanced summary { font-size: .92rem; }
+button.solid { background: var(--card); }

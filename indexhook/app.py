@@ -1,6 +1,7 @@
 """Web application: webhook intake, login, settings, rules, recordings."""
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import hmac
 import json
@@ -18,8 +19,9 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
 
-from . import audio, auth, rules as rules_mod, stt
-from .config import GLOBAL_FIELDS, USER_FIELDS, Settings, save_form
+from . import actions, audio, auth, rules as rules_mod, stt
+from .config import (CHAT_NAMES, CHAT_PROVIDERS, ENGINE_NAMES, ENGINES, GLOBAL_FIELDS, SECTION_INTROS,
+                     USER_FIELDS, Settings, save_form)
 from .db import DB, loads, now
 from .worker import Worker
 
@@ -246,24 +248,34 @@ def create_app(data_dir: str | None = None, root_path: str | None = None, transp
         return resp
 
     # dashboard ---------------------------------------------------------------
-    def checks(user) -> list[tuple[bool, str]]:
+    def checks(user) -> list[tuple]:
         s = Settings(db, user["id"])
         out = []
         out.append((bool(user["hook_token_hash"]), "Webhook token created" if user["hook_token_hash"]
                     else "No webhook token yet. Create one below."))
-        eng = s.get("stt_engine")
-        out.append((stt.engine_ready(s, eng), f"Main speech engine ({eng}) is configured" if stt.engine_ready(s, eng)
-                    else f"The main speech engine ({eng}) has no API key. Recordings fall back to the ring's own transcript."))
+        eng = stt.resolve_engine(s)
+        if eng and stt.engine_ready(s, eng):
+            out.append((True, f"Speech engine: {ENGINE_NAMES[eng]}"))
+        elif eng:
+            out.append((False, f"{ENGINE_NAMES[eng]} is chosen as the speech engine but has no key. "
+                               "Recordings fall back to the ring's own transcript.", "/settings"))
+        else:
+            out.append((False, "No speech service has a key yet. Paste one under Settings, AI services. "
+                               "Until then recordings use the ring's own transcript.", "/settings"))
+        prov = s.get("llm_provider")
+        if prov != "none" and not stt.chat_ready(s, prov):
+            out.append((False, f"The correction pass is set to {CHAT_NAMES.get(prov, prov)}, which has no key.", "/settings"))
         out.append((audio.have_ffmpeg(), "ffmpeg found" if audio.have_ffmpeg()
                     else "ffmpeg is not installed. Audio clean-up and silence detection are off."))
         active = [r for r in rules_mod.user_rules(db, user["id"]) if r["enabled"]]
         if any(r["action_type"] == "email" for r in active):
             ok = bool(s.get("smtp_host")) and bool(s.get("note_to") or user["email"])
-            out.append((ok, "Email is set up" if ok else "A rule sends email, but the SMTP server or your address is missing."))
+            out.append((True, "Email is set up") if ok else
+                       (False, "A rule sends email, but the SMTP server or your address is missing.", "/settings#f_note_to"))
         if any(r["action_type"] == "ntfy" and not r["config"].get("topic") for r in active) and not s.get("ntfy_topic"):
-            out.append((False, "A rule sends ntfy notifications, but no topic is set."))
+            out.append((False, "A rule sends ntfy notifications, but no topic is set.", "/settings#f_ntfy_topic"))
         if not active:
-            out.append((False, "No rule is enabled, so recordings are transcribed and nothing else happens."))
+            out.append((False, "No rule is enabled, so recordings are transcribed and nothing else happens.", "/rules"))
         return out
 
     def dashboard_ctx(request, user, token: str = ""):
@@ -316,32 +328,82 @@ def create_app(data_dir: str | None = None, root_path: str | None = None, transp
             label = dict(f.choices).get(fallback, fallback) if f.kind == "select" else fallback
             if f.kind == "bool":
                 label = "on" if fallback == "1" else "off"
+            if f.kind == "select" and inherited is None:
+                label = dict(f.choices).get(f.default, f.default)
             sections.setdefault(f.section, []).append({
                 "f": f, "own": own, "fallback": "" if f.kind == "secret" else label,
                 "has_fallback": has_fallback, "is_set": bool(own)})
         return sections
 
+    async def run_tests(s: Settings, email: str, username: str) -> list[tuple[bool, str, str]]:
+        """Check every service that has a key, plus email and ntfy when they are filled in."""
+        jobs: list[tuple[str, object]] = []
+        chosen = stt.resolve_engine(s)
+        out: list[tuple[bool, str, str]] = []
+        for e, name in ENGINES:
+            if stt.engine_ready(s, e):
+                jobs.append((f"{name} speech recognition", stt.check_engine(s, e, worker.transport)))
+            elif e in (s.get("stt_engine"), s.get("stt_second_engine")):
+                out.append((False, f"{name} speech recognition", "chosen above, but no key is entered"))
+        if chosen is None:
+            out.append((False, "Speech recognition", "no service has a key yet"))
+        for p, name in CHAT_PROVIDERS:
+            # MiniMax and OpenAI keys are already proven by the speech check, so their text
+            # model is tested only when it is the one chosen for the correction pass.
+            if stt.chat_ready(s, p) and (p == s.get("llm_provider") or p in ("claude", "custom")):
+                jobs.append((f"{name} text model", stt.check_chat(s, p, worker.transport)))
+            elif p == s.get("llm_provider"):
+                out.append((False, f"{name} text model", "chosen for the correction pass, but not set up"))
+        ctx = actions.context("This is a test message from IndexHook.", "Test", username, None)
+
+        async def wrap(coro):
+            try:
+                return True, await coro
+            except actions.ActionError as e:
+                return False, str(e)
+
+        if s.get("smtp_host"):
+            jobs.append(("Email", wrap(actions.send_email(s, {"subject": "IndexHook test"}, ctx, email, None, None, ""))))
+        if s.get("ntfy_topic"):
+            jobs.append(("ntfy", wrap(actions.send_ntfy(s, {"title": "IndexHook test"}, ctx, worker.transport))))
+        results = await asyncio.gather(*[j[1] for j in jobs])
+        return out + [(ok, label, msg) for (label, _), (ok, msg) in zip(jobs, results)]
+
+    def settings_page(request, user, scope: str, results=None):
+        is_user = scope != "global"
+        s = Settings(db, user["id"]) if is_user else Settings(db)
+        eng = stt.resolve_engine(s)
+        return render(request, "settings.html", {
+            "title": "Settings" if is_user else "Server defaults",
+            "action": "/settings" if is_user else "/admin/defaults",
+            "mode": "user" if is_user else "global",
+            "intro": "These settings apply to your recordings only. A blank field uses the server default."
+                     if is_user else
+                     "Values used for every user who leaves the same field blank on their own Settings page. "
+                     "A user can use a key set here but cannot read it.",
+            "section_intros": SECTION_INTROS, "results": results,
+            "engine_now": ENGINE_NAMES.get(eng, "") if eng and stt.engine_ready(s, eng) else "",
+            "sections": field_rows(USER_FIELDS, db.scope_settings(scope), Settings(db) if is_user else None)})
+
+    async def settings_post(request, user, form, scope: str):
+        save_form(db, scope, USER_FIELDS, form)
+        if form.get("act") == "test":
+            s = Settings(db, user["id"]) if scope != "global" else Settings(db)
+            return settings_page(request, user, scope, await run_tests(s, user["email"], user["username"]))
+        return go("/settings" if scope != "global" else "/admin/defaults", "Settings saved.")
+
     @page()
     async def settings(request, user, form):
         scope = f"user:{user['id']}"
         if form is not None:
-            save_form(db, scope, USER_FIELDS, form)
-            return go("/settings", "Settings saved.")
-        return render(request, "settings.html", {
-            "title": "Settings", "action": "/settings", "mode": "user",
-            "intro": "These settings apply to your recordings only. A blank field uses the server default.",
-            "sections": field_rows(USER_FIELDS, db.scope_settings(scope), Settings(db))})
+            return await settings_post(request, user, form, scope)
+        return settings_page(request, user, scope)
 
     @page(admin=True)
     async def admin_defaults(request, user, form):
         if form is not None:
-            save_form(db, "global", USER_FIELDS, form)
-            return go("/admin/defaults", "Server defaults saved.")
-        return render(request, "settings.html", {
-            "title": "Server defaults", "action": "/admin/defaults", "mode": "global",
-            "intro": "Values used for every user who leaves the same field blank on their own Settings page. "
-                     "A user can use a key set here but cannot read it.",
-            "sections": field_rows(USER_FIELDS, db.scope_settings("global"), None)})
+            return await settings_post(request, user, form, "global")
+        return settings_page(request, user, "global")
 
     @page(admin=True)
     async def admin(request, user, form):
@@ -542,7 +604,10 @@ def create_app(data_dir: str | None = None, root_path: str | None = None, transp
             worker.wake()
             return go(f"/recordings/{rec_id}")
         s = Settings(db, user["id"])
-        return render(request, "test.html", {"engine": s.get("stt_engine"), "second": s.get("stt_second_engine")})
+        return render(request, "test.html", {
+            "engine": ENGINE_NAMES.get(stt.resolve_engine(s) or "", "none yet"),
+            "second": ENGINE_NAMES.get(s.get("stt_second_engine"), "none"),
+            "correction": CHAT_NAMES.get(s.get("llm_provider"), "off")})
 
     # root path handling ------------------------------------------------------------
     class RootPath:

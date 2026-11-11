@@ -25,7 +25,7 @@ from pathlib import Path
 import httpx
 
 from . import audio
-from .config import Settings
+from .config import CHAT_NAMES, ENGINES, Settings
 
 TIMEOUT = httpx.Timeout(120, connect=15)
 AGREE_THRESHOLD = 0.85   # below this, two engines are said to disagree
@@ -119,23 +119,40 @@ def build_prompt(context: str, terms: list[str]) -> str:
 
 
 # engines --------------------------------------------------------------
+HINTS = {401: "the key was not accepted", 403: "the key is not allowed to do this",
+         402: "the account has no credit", 404: "wrong URL or unknown model",
+         429: "rate limit or quota reached"}
+
+
+def _error_text(r: httpx.Response) -> str:
+    """Pull the human-readable message out of an error body, whatever its shape."""
+    try:
+        j = r.json()
+    except ValueError:
+        return r.text[:200].replace("\n", " ").strip()
+    for path in (("error", "message"), ("error",), ("detail", "message"), ("detail",), ("err_msg",), ("message",)):
+        v = j
+        for k in path:
+            v = v.get(k) if isinstance(v, dict) else None
+        if isinstance(v, str) and v:
+            return v[:200]
+    return str(j)[:200]
+
+
 def _check(r: httpx.Response, engine: str):
     if r.status_code < 300:
         return
-    body = r.text[:300].replace("\n", " ")
     # 4xx other than timeouts and rate limits means the request itself is wrong
     # (bad key, bad model). Retrying will not help.
     retry = r.status_code in (408, 409, 425, 429) or r.status_code >= 500
-    raise EngineError(f"{engine} answered HTTP {r.status_code}: {body}", retry)
+    hint = HINTS.get(r.status_code)
+    raise EngineError(f"{engine} answered HTTP {r.status_code}" + (f" ({hint})" if hint else "")
+                      + f": {_error_text(r)}", retry)
 
 
-async def _openai(client, s: Settings, path: Path, mime: str, terms: list[str]) -> Candidate:
-    model = s.get("openai_model")
-    key = s.get("openai_api_key")
-    base = s.get("openai_base_url").rstrip("/")
-    local = not base.startswith("https://api.")
-    if not key and not local:
-        raise EngineError("no API key is set for the OpenAI-compatible engine", False)
+async def _openai_style(client, s: Settings, path: Path, mime: str, terms: list[str],
+                        name: str, base: str, key: str, model: str) -> Candidate:
+    """Any service that implements OpenAI's /audio/transcriptions."""
     data = {"model": model, "response_format": "json", "temperature": "0"}
     if s.get("stt_language"):
         data["language"] = s.get("stt_language")
@@ -143,11 +160,32 @@ async def _openai(client, s: Settings, path: Path, mime: str, terms: list[str]) 
     if prompt:
         data["prompt"] = prompt
     r = await client.post(
-        base + "/audio/transcriptions", data=data,
+        base.rstrip("/") + "/audio/transcriptions", data=data,
         files={"file": (path.name, path.read_bytes(), mime)},
         headers={"Authorization": f"Bearer {key}"} if key else {})
-    _check(r, "openai")
-    return Candidate("openai", model, (r.json().get("text") or "").strip())
+    _check(r, name)
+    return Candidate(name, model, (r.json().get("text") or "").strip())
+
+
+async def _openai(client, s: Settings, path: Path, mime: str, terms: list[str]) -> Candidate:
+    if not s.get("openai_api_key"):
+        raise EngineError("no API key is set for OpenAI", False)
+    return await _openai_style(client, s, path, mime, terms, "openai", s.get("openai_base_url"),
+                               s.get("openai_api_key"), s.get("openai_model"))
+
+
+async def _groq(client, s: Settings, path: Path, mime: str, terms: list[str]) -> Candidate:
+    if not s.get("groq_api_key"):
+        raise EngineError("no API key is set for Groq", False)
+    return await _openai_style(client, s, path, mime, terms, "groq", "https://api.groq.com/openai/v1",
+                               s.get("groq_api_key"), s.get("groq_model"))
+
+
+async def _local(client, s: Settings, path: Path, mime: str, terms: list[str]) -> Candidate:
+    if not s.get("local_base_url"):
+        raise EngineError("no URL is set for your own speech server", False)
+    return await _openai_style(client, s, path, mime, terms, "local", s.get("local_base_url"),
+                               s.get("local_api_key"), s.get("local_model"))
 
 
 # Language tags MiniMax ASR documents for its "language" header.
@@ -217,13 +255,23 @@ async def _deepgram(client, s: Settings, path: Path, mime: str, terms: list[str]
     return Candidate("deepgram", model, (alt.get("transcript") or "").strip(), alt.get("confidence"))
 
 
-ENGINE_FUNCS = {"minimax": _minimax, "openai": _openai, "elevenlabs": _elevenlabs, "deepgram": _deepgram}
+ENGINE_FUNCS = {"minimax": _minimax, "openai": _openai, "elevenlabs": _elevenlabs,
+                "deepgram": _deepgram, "groq": _groq, "local": _local}
 
 
 def engine_ready(s: Settings, engine: str) -> bool:
-    if engine == "openai":
-        return bool(s.get("openai_api_key")) or not s.get("openai_base_url").startswith("https://api.")
+    """True when the engine has what it needs to be called (a key, or a URL for "local")."""
+    if engine == "local":
+        return bool(s.get("local_base_url"))
     return engine in ENGINE_FUNCS and bool(s.get(f"{engine}_api_key"))
+
+
+def resolve_engine(s: Settings) -> str | None:
+    """The engine to use. "auto" picks the first one that is ready, in the order of ENGINES."""
+    chosen = s.get("stt_engine")
+    if chosen != "auto":
+        return chosen if chosen in ENGINE_FUNCS else None
+    return next((e for e, _ in ENGINES if engine_ready(s, e)), None)
 
 
 async def _run_engine(client, engine: str, s: Settings, path: Path, mime: str, terms) -> Candidate:
@@ -247,33 +295,106 @@ Rules:
 - Output only the corrected transcript, with no quotes and no commentary."""
 
 
-async def correct(client, s: Settings, main: Candidate, others: list[Candidate], terms: list[str]) -> tuple[str | None, str]:
-    """Ask a chat model to reconcile the transcripts. Returns (text or None, note)."""
+def chat_ready(s: Settings, provider: str) -> bool:
+    if provider == "custom":
+        return bool(s.get("llm_base_url") and s.get("llm_model"))
+    return provider in CHAT_NAMES and bool(s.get(f"{provider}_api_key"))
+
+
+async def chat(client, s: Settings, provider: str, system: str, user: str) -> str:
+    """One question, one answer, from the chosen text model. Raises EngineError."""
+    if provider == "claude":
+        # Anthropic Messages API.
+        r = await client.post(
+            s.get("claude_base_url").rstrip("/") + "/v1/messages",
+            json={"model": s.get("claude_model"), "max_tokens": 1024, "system": system,
+                  "messages": [{"role": "user", "content": user}]},
+            headers={"x-api-key": s.get("claude_api_key"), "anthropic-version": "2023-06-01"})
+        _check(r, "claude")
+        try:
+            out = "".join(b.get("text", "") for b in r.json()["content"] if b.get("type") == "text")
+        except (KeyError, TypeError, AttributeError):
+            raise EngineError("claude returned an unexpected answer")
+    else:
+        # OpenAI-style chat completions. No temperature is sent: some models accept
+        # only their default, and MiniMax rejects 0.
+        base, key, model = {
+            "minimax": ("minimax_base_url", "minimax_api_key", "minimax_chat_model"),
+            "openai": ("openai_base_url", "openai_api_key", "openai_chat_model"),
+            "custom": ("llm_base_url", "llm_api_key", "llm_model"),
+        }[provider]
+        r = await client.post(
+            s.get(base).rstrip("/") + "/chat/completions",
+            json={"model": s.get(model), "messages": [{"role": "system", "content": system},
+                                                      {"role": "user", "content": user}]},
+            headers={"Authorization": f"Bearer {s.get(key)}"} if s.get(key) else {})
+        _check(r, provider)
+        try:
+            out = r.json()["choices"][0]["message"]["content"] or ""
+        except (KeyError, IndexError, TypeError):
+            raise EngineError(f"{provider} returned an unexpected answer")
+    # Reasoning models may wrap their thinking in <think> tags.
+    return re.sub(r"<think>.*?</think>", "", out, flags=re.S).strip()
+
+
+async def correct(client, s: Settings, provider: str, main: Candidate, others: list[Candidate],
+                  terms: list[str]) -> tuple[str | None, str]:
+    """Ask a text model to reconcile the transcripts. Returns (text or None, note)."""
     lines = [f"MAIN ({main.engine}): {main.text}"]
     lines += [f"OTHER ({c.engine}): {c.text}" for c in others if c.text]
     lines.append("Terms: " + (", ".join(terms) if terms else "(none)"))
-    body = {
-        "model": s.get("llm_model"),
-        "temperature": 0,
-        "messages": [{"role": "system", "content": CORRECTION_SYSTEM},
-                     {"role": "user", "content": "\n".join(lines)}],
-    }
     try:
-        r = await client.post(s.get("llm_base_url").rstrip("/") + "/chat/completions", json=body,
-                              headers={"Authorization": f"Bearer {s.get('llm_api_key')}"})
-        if r.status_code >= 300:
-            return None, f"correction model answered HTTP {r.status_code}"
-        out = r.json()["choices"][0]["message"]["content"] or ""
-    except (httpx.HTTPError, KeyError, IndexError, ValueError, TypeError) as e:
-        return None, f"correction model failed: {type(e).__name__}"
-    # Reasoning models may wrap their thinking in <think> tags.
-    out = re.sub(r"<think>.*?</think>", "", out, flags=re.S).strip().strip('"').strip()
+        out = await chat(client, s, provider, CORRECTION_SYSTEM, "\n".join(lines))
+    except EngineError as e:
+        return None, f"correction pass failed: {e}"
+    except (httpx.HTTPError, ValueError) as e:
+        return None, f"correction pass failed: {type(e).__name__}"
+    out = out.strip('"').strip()
     if not out:
         return None, "correction model returned nothing"
     sim = similarity(out, main.text)
     if sim < DRIFT_THRESHOLD:
         return None, f"correction rejected: only {sim:.0%} similar to the main transcript"
     return out, ""
+
+
+# connection checks ------------------------------------------------------
+def tiny_wav() -> bytes:
+    """One second of quiet 440 Hz tone, 16 kHz mono. Enough to prove a key and model work."""
+    import io
+    import math
+    import struct
+    import wave
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        w.writeframes(b"".join(struct.pack("<h", int(3000 * math.sin(2 * math.pi * 440 * i / 16000)))
+                               for i in range(16000)))
+    return buf.getvalue()
+
+
+async def check_engine(s: Settings, engine: str, transport=None) -> tuple[bool, str]:
+    """Send a one-second test clip to a speech engine. Returns (ok, message)."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        path = Path(d) / "test.wav"
+        path.write_bytes(tiny_wav())
+        async with httpx.AsyncClient(timeout=httpx.Timeout(40, connect=10), transport=transport) as client:
+            c = await _run_engine(client, engine, s, path, "audio/wav", [])
+    return (False, c.error) if c.error else (True, f"answered (model {c.model})")
+
+
+async def check_chat(s: Settings, provider: str, transport=None) -> tuple[bool, str]:
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(40, connect=10), transport=transport) as client:
+            out = await chat(client, s, provider, "You are a connection test.", "Reply with the single word OK.")
+    except EngineError as e:
+        return False, str(e)
+    except (httpx.HTTPError, ValueError) as e:
+        return False, f"{provider}: {type(e).__name__}: {e}"
+    return (True, "answered") if out else (False, f"{provider} returned an empty answer")
 
 
 # pipeline ---------------------------------------------------------------
@@ -294,10 +415,13 @@ async def transcribe(s: Settings, src: Path, mime: str, ring_text: str = "",
             res.notes.append(f"peak level {prep.max_db:.0f} dB is below the silence threshold; no engine was called")
             return res
 
-        engines = [s.get("stt_engine")]
+        first = resolve_engine(s)
+        engines = [first] if first else []
         second = s.get("stt_second_engine")
-        if second in ENGINE_FUNCS and second != engines[0]:
+        if second in ENGINE_FUNCS and second not in engines:
             engines.append(second)
+        if not first:
+            res.notes.append("no speech service has a key yet (Settings, AI services)")
 
         async with httpx.AsyncClient(timeout=TIMEOUT, transport=transport) as client:
             res.candidates = list(await asyncio.gather(
@@ -308,7 +432,7 @@ async def transcribe(s: Settings, src: Path, mime: str, ring_text: str = "",
                 res.candidates.append(Candidate("ring", "Index app", ring_text))
 
             if not good:
-                if all(c.error == "" for c in res.candidates if c.engine != "ring") and res.candidates:
+                if engines and all(c.error == "" for c in res.candidates if c.engine != "ring"):
                     # Engines answered but heard no words.
                     res.notes.append("the engines returned an empty transcript")
                 res.retry = any(c.retry for c in res.candidates)
@@ -319,7 +443,7 @@ async def transcribe(s: Settings, src: Path, mime: str, ring_text: str = "",
 
             main = good[0]
             res.text, res.source = main.text, main.engine
-            if main.engine != engines[0]:
+            if main.engine != first:
                 res.needs_review = True
                 res.notes.append(f"the main engine failed; used {main.engine}")
 
@@ -329,11 +453,12 @@ async def transcribe(s: Settings, src: Path, mime: str, ring_text: str = "",
                     res.needs_review = True
                     res.notes.append(f"the engines agree on only {res.agreement:.0%} of the words")
 
-            if s.bool("llm_enabled") and s.get("llm_api_key"):
+            provider = s.get("llm_provider")
+            if provider != "none" and chat_ready(s, provider):
                 others = [c for c in res.candidates if c is not main and c.text]
                 # Nothing to reconcile when there is a single transcript and no vocabulary.
                 if others or terms:
-                    fixed, note = await correct(client, s, main, others, terms)
+                    fixed, note = await correct(client, s, provider, main, others, terms)
                     if fixed is not None:
                         if fixed != main.text:
                             res.source = "corrected"

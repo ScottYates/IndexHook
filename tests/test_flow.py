@@ -108,7 +108,7 @@ def test_engines_agree_no_review(client, world, smtp, tone):
 
 
 def test_correction_pass_accepts_small_fix_and_rejects_rewrite(client, world, smtp, tone):
-    csrf, token, uid = setup_user(client, smtp, llm_enabled="1", llm_api_key="k", llm_base_url="https://llm.test/v1",
+    csrf, token, uid = setup_user(client, smtp, llm_provider="custom", llm_api_key="k", llm_base_url="https://llm.test/v1", llm_model="m",
                                   vocabulary="Shivani\nYunoHost")
     world.llm = "<think>hmm</think>Note to self, call Shivani about the YunoHost upgrade."
     rec = wait_done(client, ring_post(client, token, tone, recorded_at=1).json()["id"])
@@ -265,7 +265,7 @@ def test_minimax_settings_are_configurable(client, world, smtp, tone):
                                        "stt_engine": "minimax"})
     assert r.status_code == 303
     page = client.get("/settings").text
-    assert "MiniMax engine" in page and "mm-key" not in page
+    assert "MiniMax API key" in page and "mm-key" not in page
     wait_done(client, ring_post(client, token, tone, recorded_at=2).json()["id"])
     call = world.to("api.minimaxi.com")[0]
     assert call["path"] == "/v1/speech_to_text" and b"asr-2.0" in call["body"]
@@ -280,9 +280,129 @@ def test_minimax_out_of_credit_falls_back_without_retry(client, world, smtp, ton
 
 
 def test_minimax_as_cross_check(client, world, smtp, tone):
-    csrf, token, uid = setup_user(client, smtp, stt_second_engine="minimax", minimax_api_key="mm-key",
+    csrf, token, uid = setup_user(client, smtp, stt_engine="openai", stt_second_engine="minimax", minimax_api_key="mm-key",
                                   vocabulary="Yunohost => YunoHost")
     rec = wait_done(client, ring_post(client, token, tone, recorded_at=4).json()["id"])
     d = detail(rec)
     assert [c["engine"] for c in d["candidates"]] == ["openai", "minimax", "ring"]
     assert d["agreement"] == 1.0 and not rec["needs_review"]
+
+
+def test_automatic_engine_uses_the_first_service_with_a_key(client, world, smtp, tone):
+    import json
+    from indexhook import stt
+    from indexhook.config import Settings
+    csrf, token, uid = setup_user(client, smtp)             # only an OpenAI key
+    assert stt.resolve_engine(Settings(client.db, uid)) == "openai"
+    set_user(client, uid, deepgram_api_key="dg")
+    assert stt.resolve_engine(Settings(client.db, uid)) == "openai"
+    set_user(client, uid, minimax_api_key="mm")             # MiniMax comes first in the order
+    assert stt.resolve_engine(Settings(client.db, uid)) == "minimax"
+    rec = wait_done(client, ring_post(client, token, tone).json()["id"])
+    assert rec["transcript_source"] == "minimax" and world.to("api.openai.com") == []
+
+
+def test_no_key_at_all_uses_ring_transcript_and_says_why(client, world, smtp, tone):
+    csrf, token, uid = setup_user(client, smtp)
+    set_user(client, uid, openai_api_key=None)
+    page = client.get("/").text
+    assert "No speech service has a key yet" in page
+    assert 'paste one key under AI services' in client.get("/settings").text
+    rec = wait_done(client, ring_post(client, token, tone).json()["id"])
+    assert rec["transcript_source"] == "ring" and rec["attempts"] == 1
+    assert any("no speech service has a key" in n for n in detail(rec)["notes"])
+
+
+def test_claude_correction_pass(client, world, smtp, tone):
+    import json
+    csrf, token, uid = setup_user(client, smtp, llm_provider="claude", claude_api_key="sk-ant-test",
+                                  vocabulary="Shivani\nYunoHost")
+    world.llm = "Note to self, call Shivani about the YunoHost upgrade."
+    rec = wait_done(client, ring_post(client, token, tone).json()["id"])
+    assert rec["transcript"] == world.llm and rec["transcript_source"] == "corrected"
+    call = world.to("api.anthropic.com")[0]
+    assert call["path"] == "/v1/messages"
+    assert call["headers"]["x-api-key"] == "sk-ant-test" and call["headers"]["anthropic-version"] == "2023-06-01"
+    assert "authorization" not in call["headers"]
+    body = json.loads(call["body"])
+    assert body["model"] == "claude-haiku-5-5" and body["max_tokens"] == 1024
+    assert "fix speech recognition errors" in body["system"]
+    assert body["messages"][0]["role"] == "user" and "MAIN (openai)" in body["messages"][0]["content"]
+    assert "Shivani, YunoHost" in body["messages"][0]["content"]
+
+
+def test_claude_failure_keeps_the_engine_transcript(client, world, smtp, tone):
+    csrf, token, uid = setup_user(client, smtp, llm_provider="claude", claude_api_key="bad", vocabulary="Shivani")
+    world.status["claude"] = 401
+    rec = wait_done(client, ring_post(client, token, tone).json()["id"])
+    assert rec["status"] == "done" and rec["transcript"] == world.texts["openai"]
+    assert any("correction pass failed: claude answered HTTP 401" in n for n in detail(rec)["notes"])
+    assert len(smtp.messages) == 1
+
+
+def test_minimax_does_speech_and_correction_with_one_key(client, world, smtp, tone):
+    import json
+    csrf, token, uid = setup_user(client, smtp, minimax_api_key="mm-key", llm_provider="minimax",
+                                  vocabulary="Shivani")
+    world.llm = "<think>compare</think>Note to self, call Shivani about the YunoHost upgrade."
+    rec = wait_done(client, ring_post(client, token, tone).json()["id"])
+    calls = world.to("api.minimax.io")
+    assert [c["path"] for c in calls] == ["/v1/speech_to_text", "/v1/chat/completions"]
+    assert all(c["headers"]["authorization"] == "Bearer mm-key" for c in calls)
+    body = json.loads(calls[1]["body"])
+    assert body["model"] == "MiniMax-M3" and "temperature" not in body
+    assert rec["transcript"] == "Note to self, call Shivani about the YunoHost upgrade."
+
+
+def test_groq_and_own_server_presets(client, world, smtp, tone):
+    csrf, token, uid = setup_user(client, smtp, stt_engine="groq", groq_api_key="gsk",
+                                  stt_second_engine="local", local_base_url="http://whisper.lan:8000/v1")
+    rec = wait_done(client, ring_post(client, token, tone).json()["id"])
+    g = world.to("api.groq.com")[0]
+    assert g["path"] == "/openai/v1/audio/transcriptions" and g["headers"]["authorization"] == "Bearer gsk"
+    assert b"whisper-large-v3" in g["body"]
+    l = world.to("whisper.lan")[0]
+    assert l["path"] == "/v1/audio/transcriptions" and "authorization" not in l["headers"]
+    assert [c["engine"] for c in detail(rec)["candidates"]] == ["groq", "local", "ring"]
+
+
+def test_save_and_test_reports_each_service(client, world, smtp):
+    csrf, token, uid = setup_user(client, smtp)
+    world.status["deepgram"] = 401
+    r = client.post("/settings", data={
+        "csrf": csrf, "act": "test", "minimax_api_key": "mm", "deepgram_api_key": "bad",
+        "claude_api_key": "sk-ant", "stt_second_engine": "elevenlabs", "llm_provider": "claude",
+        "ntfy_topic": "ring-notes"})
+    world.llm = "OK"
+    assert r.status_code == 200
+    import re
+    rows = dict((label, (cls, text)) for cls, label, text in
+                re.findall(r'<li class="(ok|bad)"><b>([^<]+)</b>: ([^<]*)</li>', r.text))
+    assert rows["MiniMax speech recognition"] == ("ok", "answered (model asr-1.0)")
+    assert rows["OpenAI speech recognition"][0] == "ok"
+    assert rows["Deepgram speech recognition"][0] == "bad" and "HTTP 401" in rows["Deepgram speech recognition"][1]
+    assert rows["ElevenLabs Scribe speech recognition"] == ("bad", "chosen above, but no key is entered")
+    assert rows["Email"] == ("ok", "sent to scott@example.org")
+    assert rows["ntfy"] == ("ok", "published to ring-notes")
+    assert "Claude text model" in rows
+    # the test clip is a real WAV file and the values were saved before testing
+    mm = world.to("api.minimax.io")[0]
+    assert b"RIFF" in mm["body"] and b"WAVE" in mm["body"]
+    assert "IndexHook test" in smtp.messages[0].content.decode()
+    from indexhook.config import Settings
+    assert Settings(client.db, uid).get("llm_provider") == "claude"
+    # nothing was recorded as a recording
+    assert client.db.one("SELECT COUNT(*) n FROM recordings")["n"] == 0
+
+
+def test_advanced_fields_are_folded_and_partial_forms_keep_other_values(client, world, smtp):
+    from indexhook.config import Settings
+    csrf, token, uid = setup_user(client, smtp, stt_language="de")
+    page = client.get("/settings").text
+    assert '<details class="advanced">' in page and "settings with working defaults" in page
+    assert page.index('id="f_minimax_api_key"') < page.index('<details class="advanced"') < page.index('id="f_minimax_base_url"')
+    client.post("/settings", data={"csrf": csrf, "minimax_api_key": "mm"})
+    assert Settings(client.db, uid).get("stt_language") == "de"
+    # once an advanced value is set, its block opens so the value is not hidden
+    set_user(client, uid, minimax_model="asr-2.0")
+    assert '<details class="advanced" open>' in client.get("/settings").text

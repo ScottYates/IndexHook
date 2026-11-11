@@ -3,8 +3,8 @@
 {% block body %}
 <h1>Test transcription</h1>
 <p class="hint">Send audio through the same steps as a ring recording. The result page shows what each engine heard.
-Main engine: <b>{{ engine }}</b>. Cross-check: <b>{{ second }}</b>. To compare engines, set a cross-check engine in
-<a href="{{ root }}/settings">Settings</a>, or change the main engine and use "Transcribe again" on the result.</p>
+Engine: <b>{{ engine }}</b>. Cross-check: <b>{{ second }}</b>. Correction pass: <b>{{ correction }}</b>.
+To compare engines, set a cross-check engine in <a href="{{ root }}/settings">Settings</a>, or change the engine and use "Transcribe again" on the result.</p>
 
 <section class="card narrow">
   <form method="post" action="{{ root }}/test" enctype="multipart/form-data" id="f">

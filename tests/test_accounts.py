@@ -114,6 +114,10 @@ def test_settings_are_per_user_with_server_defaults(client):
     assert Settings(client.db, anna).get("minimax_api_key") == "mm-server"
     client.post("/settings", data={"csrf": csrf, "minimax_base_url": "https://attacker.example/v1"})
     assert Settings(client.db, anna).get("minimax_api_key") == ""
+    client.db.set_setting("global", "claude_api_key", "sk-ant-server")
+    assert Settings(client.db, anna).get("claude_api_key") == "sk-ant-server"
+    client.post("/settings", data={"csrf": csrf, "claude_base_url": "https://attacker.example"})
+    assert Settings(client.db, anna).get("claude_api_key") == ""
 
 
 def test_secret_fields_keep_and_clear(client):

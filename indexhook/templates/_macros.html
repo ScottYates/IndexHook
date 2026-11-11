@@ -22,11 +22,7 @@
 </table>
 {% endmacro %}
 
-{% macro fields(sections, mode) %}
-{% for section, rows in sections.items() %}
-<fieldset>
-  <legend>{{ section }}</legend>
-  {% for r in rows %}{% set f = r.f %}
+{% macro one_field(r, mode) %}{% set f = r.f %}
   <div class="field">
     <label for="f_{{ f.key }}">{{ f.label }}</label>
     <div>
@@ -42,7 +38,7 @@
         <option value="0"{% if r.own == "0" %} selected{% endif %}>Off</option>
       </select>
     {% elif f.kind == "textarea" %}
-      <textarea id="f_{{ f.key }}" name="{{ f.key }}" rows="5" placeholder="{{ r.fallback }}">{{ r.own }}</textarea>
+      <textarea id="f_{{ f.key }}" name="{{ f.key }}" rows="4" placeholder="{{ r.fallback }}">{{ r.own }}</textarea>
     {% elif f.kind == "secret" %}
       <input id="f_{{ f.key }}" type="password" name="{{ f.key }}" autocomplete="new-password"
              placeholder="{% if r.is_set %}saved; type to replace{% elif mode == 'user' and r.has_fallback %}using the server's key{% else %}not set{% endif %}">
@@ -54,7 +50,21 @@
     {% if f.help %}<small>{{ f.help }}</small>{% endif %}
     </div>
   </div>
-  {% endfor %}
+{% endmacro %}
+
+{% macro fields(sections, mode, intros) %}
+{% for section, rows in sections.items() %}
+<fieldset>
+  <legend>{{ section }}</legend>
+  {% if intros[section] %}<p class="hint">{{ intros[section] }}</p>{% endif %}
+  {% for r in rows if not r.f.advanced %}{{ one_field(r, mode) }}{% endfor %}
+  {% set adv = rows | selectattr("f.advanced") | list %}
+  {% if adv %}
+  <details class="advanced"{% if adv | selectattr("own") | list %} open{% endif %}>
+    <summary>Advanced ({{ adv | length }} settings with working defaults)</summary>
+    {% for r in adv %}{{ one_field(r, mode) }}{% endfor %}
+  </details>
+  {% endif %}
 </fieldset>
 {% endfor %}
 {% endmacro %}

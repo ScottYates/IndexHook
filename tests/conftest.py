@@ -58,6 +58,10 @@ class FakeWorld:
         if host == "api.deepgram.com":
             return self._stt("deepgram", {"results": {"channels": [{"alternatives": [
                 {"transcript": self.texts["deepgram"], "confidence": 0.97}]}]}})
+        if path.endswith("/v1/messages"):
+            if self.status.get("claude", 200) != 200:
+                return httpx.Response(self.status["claude"], json={"type": "error", "error": {"message": "invalid x-api-key"}})
+            return httpx.Response(200, json={"content": [{"type": "text", "text": self.llm}]})
         if path.endswith("/chat/completions"):
             return httpx.Response(200, json={"choices": [{"message": {"content": self.llm}}]})
         return httpx.Response(200, json={"ok": True})
