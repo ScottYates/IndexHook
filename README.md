@@ -102,9 +102,12 @@ Each recording goes through these steps. All of them are set per user under **Se
 
 | Engine | Setting | Vocabulary is sent as | Notes |
 | --- | --- | --- | --- |
+| MiniMax ASR | `minimax` | not sent | Default model `asr-1.0` at `https://api.minimax.io/v1`. The API has no vocabulary or prompt parameter. Language is sent only when it is one MiniMax lists; otherwise the service detects it. Limits: 500 seconds and 50 MB per recording |
 | OpenAI-compatible | `openai` | a prompt | Works with OpenAI (`gpt-4o-transcribe`), Groq (`whisper-large-v3`), and local servers that implement `/v1/audio/transcriptions`, such as speaches or whisper.cpp |
 | ElevenLabs Scribe | `elevenlabs` | `keyterms` | Default model `scribe_v2`. ElevenLabs bills keyterms as an extra |
 | Deepgram | `deepgram` | `keyterm` | Default model `nova-3` |
+
+To use MiniMax: under **Settings**, set **Main engine** (or **Cross-check engine**) to MiniMax ASR, and enter your key in the **MiniMax engine** section. Base URL and model can be changed there too. An admin can set the same fields once for everyone under **Admin, Server defaults**. The same MiniMax key also works for the correction pass: set its chat API base URL to `https://api.minimax.io/v1` and pick a MiniMax chat model. Since MiniMax ASR takes no vocabulary, the correction pass and `heard => meant` lines are the ways to fix names with this engine.
 
 Published benchmarks disagree on which engine is the most accurate, and none of them used ring recordings. The Test page is there to answer the question with your own voice and your own microphone.
 

@@ -239,3 +239,50 @@ def test_restart_resumes_queued_recording(make_client, world, smtp, tone):
     c1.__enter__()                          # start again on the same data
     rec = wait_done(c1, 1)
     assert rec["status"] == "done" and len(smtp.messages) == 1
+
+
+def test_minimax_engine(client, world, smtp, tone):
+    csrf, token, uid = setup_user(client, smtp, stt_engine="minimax", minimax_api_key="mm-key",
+                                  vocabulary="Shivani")
+    rec = wait_done(client, ring_post(client, token, tone, recorded_at=1).json()["id"])
+    assert rec["status"] == "done" and rec["transcript_source"] == "minimax"
+    assert rec["transcript"] == world.texts["minimax"]
+    call = world.to("api.minimax.io")[0]
+    assert call["path"] == "/v1/speech_to_text"
+    assert call["headers"]["authorization"] == "Bearer mm-key"
+    assert call["headers"]["language"] == "en"            # sent as a header, per the API
+    body = call["body"]
+    assert b'name="model"\r\n\r\nasr-1.0' in body and b'name="response_format"\r\n\r\njson' in body
+    assert b'name="stream"\r\n\r\nfalse' in body and b"fLaC" in body
+    assert b"Shivani" not in body and b'name="language"' not in body
+    assert "\r\n\r\nCall Shivani" in smtp.messages[0].content.decode()
+
+
+def test_minimax_settings_are_configurable(client, world, smtp, tone):
+    csrf, token, uid = setup_user(client, smtp, stt_engine="minimax", minimax_api_key="mm-key")
+    r = client.post("/settings", data={"csrf": csrf, "minimax_base_url": "https://api.minimaxi.com/v1/",
+                                       "minimax_model": "asr-2.0", "stt_language": "sv",
+                                       "stt_engine": "minimax"})
+    assert r.status_code == 303
+    page = client.get("/settings").text
+    assert "MiniMax engine" in page and "mm-key" not in page
+    wait_done(client, ring_post(client, token, tone, recorded_at=2).json()["id"])
+    call = world.to("api.minimaxi.com")[0]
+    assert call["path"] == "/v1/speech_to_text" and b"asr-2.0" in call["body"]
+    assert "language" not in call["headers"]              # Swedish is not a listed tag: auto-detect
+
+
+def test_minimax_out_of_credit_falls_back_without_retry(client, world, smtp, tone):
+    csrf, token, uid = setup_user(client, smtp, stt_engine="minimax", minimax_api_key="mm-key")
+    world.status["minimax"] = 402
+    rec = wait_done(client, ring_post(client, token, tone, recorded_at=3).json()["id"])
+    assert rec["transcript_source"] == "ring" and rec["needs_review"] and rec["attempts"] == 1
+
+
+def test_minimax_as_cross_check(client, world, smtp, tone):
+    csrf, token, uid = setup_user(client, smtp, stt_second_engine="minimax", minimax_api_key="mm-key",
+                                  vocabulary="Yunohost => YunoHost")
+    rec = wait_done(client, ring_post(client, token, tone, recorded_at=4).json()["id"])
+    d = detail(rec)
+    assert [c["engine"] for c in d["candidates"]] == ["openai", "minimax", "ring"]
+    assert d["agreement"] == 1.0 and not rec["needs_review"]

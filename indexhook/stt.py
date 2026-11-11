@@ -150,6 +150,31 @@ async def _openai(client, s: Settings, path: Path, mime: str, terms: list[str]) 
     return Candidate("openai", model, (r.json().get("text") or "").strip())
 
 
+# Language tags MiniMax ASR documents for its "language" header.
+MINIMAX_LANGUAGES = {"zh", "yue", "en", "ja", "ko", "th", "vi", "id", "ms", "fil", "ar", "tr",
+                     "fr", "de", "es", "it", "pt", "pl", "ru", "uk"}
+
+
+async def _minimax(client, s: Settings, path: Path, mime: str, terms: list[str]) -> Candidate:
+    """MiniMax ASR. The API has no vocabulary or prompt parameter, so `terms` is not sent."""
+    model = s.get("minimax_model")
+    key = s.get("minimax_api_key")
+    if not key:
+        raise EngineError("no API key is set for MiniMax", False)
+    headers = {"Authorization": f"Bearer {key}"}
+    # The language goes in a request header, not a form field. An unlisted tag is left
+    # out, which makes the service detect the language.
+    lang = s.get("stt_language").lower()
+    if lang in MINIMAX_LANGUAGES:
+        headers["language"] = lang
+    r = await client.post(
+        s.get("minimax_base_url").rstrip("/") + "/speech_to_text",
+        data={"model": model, "response_format": "json", "stream": "false"},
+        files={"file": (path.name, path.read_bytes(), mime)}, headers=headers)
+    _check(r, "minimax")
+    return Candidate("minimax", model, (r.json().get("text") or "").strip())
+
+
 async def _elevenlabs(client, s: Settings, path: Path, mime: str, terms: list[str]) -> Candidate:
     model = s.get("elevenlabs_model")
     key = s.get("elevenlabs_api_key")
@@ -192,7 +217,7 @@ async def _deepgram(client, s: Settings, path: Path, mime: str, terms: list[str]
     return Candidate("deepgram", model, (alt.get("transcript") or "").strip(), alt.get("confidence"))
 
 
-ENGINE_FUNCS = {"openai": _openai, "elevenlabs": _elevenlabs, "deepgram": _deepgram}
+ENGINE_FUNCS = {"minimax": _minimax, "openai": _openai, "elevenlabs": _elevenlabs, "deepgram": _deepgram}
 
 
 def engine_ready(s: Settings, engine: str) -> bool:

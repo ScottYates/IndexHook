@@ -37,7 +37,8 @@ class FakeWorld:
 
     def __init__(self):
         self.calls = []
-        self.texts = {"openai": "Note to self, call Shivani about the Yunohost upgrade.",
+        self.texts = {"minimax": "Note to self, call Shivani about the YunoHost upgrade.",
+                      "openai": "Note to self, call Shivani about the Yunohost upgrade.",
                       "elevenlabs": "Note to self, call Shivani about the YunoHost upgrade.",
                       "deepgram": "Note to self call Shivani about the YunoHost upgrade"}
         self.status = {}
@@ -48,6 +49,8 @@ class FakeWorld:
         body = request.content
         self.calls.append({"host": host, "path": path, "query": str(request.url.query, "ascii"),
                            "headers": dict(request.headers), "body": body})
+        if path.endswith("/speech_to_text"):
+            return self._stt("minimax", {"text": self.texts["minimax"], "duration": 2.0, "trace_id": "t"})
         if path.endswith("/audio/transcriptions"):
             return self._stt("openai", {"text": self.texts["openai"]})
         if host == "api.elevenlabs.io":

@@ -110,6 +110,10 @@ def test_settings_are_per_user_with_server_defaults(client):
     # a user who points the engine at their own URL does not get the server's key
     client.post("/settings", data={"csrf": csrf, "openai_base_url": "https://attacker.example/v1"})
     assert Settings(client.db, anna).get("openai_api_key") == ""
+    client.db.set_setting("global", "minimax_api_key", "mm-server")
+    assert Settings(client.db, anna).get("minimax_api_key") == "mm-server"
+    client.post("/settings", data={"csrf": csrf, "minimax_base_url": "https://attacker.example/v1"})
+    assert Settings(client.db, anna).get("minimax_api_key") == ""
 
 
 def test_secret_fields_keep_and_clear(client):

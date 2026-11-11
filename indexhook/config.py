@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from .db import DB
 
 ENGINES = [
+    ("minimax", "MiniMax ASR"),
     ("openai", "OpenAI-compatible API (OpenAI, Groq, a local Whisper server)"),
     ("elevenlabs", "ElevenLabs Scribe"),
     ("deepgram", "Deepgram Nova"),
@@ -49,7 +50,8 @@ FIELDS: list[Field] = [
                    "detection on short clips. Leave blank to detect."),
         Field("vocabulary", "Vocabulary and fixes", "textarea", "",
               help="One entry per line. A plain entry (a name, a product, a place) is given to "
-                   "the engine as a hint. An entry written as heard => meant is replaced in the "
+                   "the engine as a hint (MiniMax ASR takes no hints; there the entries are used only by "
+                   "the correction pass). An entry written as heard => meant is replaced in the "
                    "final text, for example: no to self => note to self"),
         Field("stt_context", "Context", "textarea", "",
               help="One or two sentences about what you usually record. Sent as a prompt to "
@@ -71,6 +73,16 @@ FIELDS: list[Field] = [
         Field("openai_api_key", "API key", "secret"),
         Field("openai_model", "Model", "text", "gpt-4o-transcribe",
               help="Groq and local Whisper servers: whisper-large-v3."),
+    ),
+    *_f(
+        "MiniMax engine", "user",
+        Field("minimax_base_url", "Base URL", "text", "https://api.minimax.io/v1",
+              help="The international platform. Accounts on the China platform use "
+                   "https://api.minimaxi.com/v1."),
+        Field("minimax_api_key", "API key", "secret",
+              help="From the MiniMax platform under Account, API Keys. Speech recognition is "
+                   "billed per hour of audio."),
+        Field("minimax_model", "Model", "text", "asr-1.0"),
     ),
     *_f(
         "ElevenLabs engine", "user",
@@ -151,6 +163,7 @@ GLOBAL_FIELDS = [f for f in FIELDS if f.scope == "global"]
 # secret -> settings that say where the secret is sent
 SECRET_GUARDS = {
     "openai_api_key": ["openai_base_url"],
+    "minimax_api_key": ["minimax_base_url"],
     "llm_api_key": ["llm_base_url"],
     "ntfy_token": ["ntfy_url"],
     "smtp_password": ["smtp_host", "smtp_user"],
