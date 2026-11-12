@@ -74,8 +74,8 @@ FIELDS: list[Field] = [
         "AI services", "user",
         Field("minimax_api_key", "MiniMax API key", "secret",
               help="Speech recognition, and the correction pass if you choose MiniMax for it. "
-                   "From platform.minimax.io, API Keys, Create new secret key (the pay-as-you-go "
-                   "key, not a Token Plan Subscription Key)."),
+                   "From platform.minimax.io: either the Subscription Key under Billing, Token Plan, "
+                   "or a pay-as-you-go key under API Keys."),
         Field("google_api_key", "Google Gemini API key", "secret",
               help="Speech recognition with Gemini 3.5 Transcribe. From aistudio.google.com/apikey."),
         Field("openai_api_key", "OpenAI API key", "secret",
