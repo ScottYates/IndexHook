@@ -74,17 +74,21 @@ FIELDS: list[Field] = [
         "AI services", "user",
         Field("minimax_api_key", "MiniMax API key", "secret",
               help="Speech recognition, and the correction pass if you choose MiniMax for it. "
-                   "From platform.minimax.io, Account, API Keys."),
+                   "From platform.minimax.io, API Keys, Create new secret key (the pay-as-you-go "
+                   "key, not a Token Plan Subscription Key)."),
         Field("google_api_key", "Google Gemini API key", "secret",
-              help="Speech recognition with Gemini 3.5 Transcribe. From aistudio.google.com, Get API key."),
+              help="Speech recognition with Gemini 3.5 Transcribe. From aistudio.google.com/apikey."),
         Field("openai_api_key", "OpenAI API key", "secret",
-              help="Speech recognition and the correction pass. From platform.openai.com."),
+              help="Speech recognition and the correction pass. From platform.openai.com/api-keys."),
         Field("claude_api_key", "Claude API key", "secret",
               help="Correction pass only. The Claude API reads text and images, not audio, so "
-                   "it cannot transcribe a recording by itself. From console.anthropic.com."),
-        Field("elevenlabs_api_key", "ElevenLabs API key", "secret", help="Speech recognition."),
-        Field("deepgram_api_key", "Deepgram API key", "secret", help="Speech recognition."),
-        Field("groq_api_key", "Groq API key", "secret", help="Speech recognition (hosted Whisper)."),
+                   "it cannot transcribe a recording by itself. From platform.claude.com, "
+                   "API keys. Tie the key to a workspace when you create it."),
+        Field("elevenlabs_api_key", "ElevenLabs API key", "secret",
+              help="Speech recognition. From elevenlabs.io/app/developers/api-keys."),
+        Field("deepgram_api_key", "Deepgram API key", "secret",
+              help="Speech recognition. From console.deepgram.com, Settings, API Keys."),
+        Field("groq_api_key", "Groq API key", "secret", help="Speech recognition (hosted Whisper). From console.groq.com/keys."),
         *_adv(
             Field("minimax_base_url", "MiniMax base URL", "text", "https://api.minimax.io/v1",
                   help="Accounts on the China platform use https://api.minimaxi.com/v1."),
@@ -105,6 +109,8 @@ FIELDS: list[Field] = [
             Field("claude_base_url", "Claude base URL", "text", "https://api.anthropic.com"),
             Field("claude_model", "Claude model", "text", "claude-haiku-5-5",
                   help="Used for the correction pass."),
+            Field("claude_workspace_id", "Claude workspace ID", "text", "",
+                  help="Only for a key that is not tied to a workspace. Starts with wrkspc_."),
             Field("elevenlabs_model", "ElevenLabs model", "text", "scribe_v2"),
             Field("deepgram_model", "Deepgram model", "text", "nova-3"),
             Field("groq_model", "Groq model", "text", "whisper-large-v3"),
@@ -161,7 +167,9 @@ FIELDS: list[Field] = [
         Field("note_to", "Send notes to", "text", "",
               help="Address for email actions. Blank uses your account email."),
         Field("smtp_host", "SMTP server", "text", "",
-              help="On YunoHost: localhost, port 25, no encryption."),
+              help="On YunoHost: localhost, port 25, no encryption. Gmail: smtp.gmail.com, port 587, "
+                   "STARTTLS, your address as the user and an app password (not your normal "
+                   "password). Steps are in deploy/yunohost.md."),
         Field("smtp_port", "SMTP port", "int", "587"),
         Field("smtp_security", "Encryption", "select", "starttls",
               choices=[("starttls", "STARTTLS"), ("ssl", "SSL/TLS"), ("none", "None")]),

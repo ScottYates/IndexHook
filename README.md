@@ -131,6 +131,8 @@ With only a MiniMax key: MiniMax transcribes, and setting **Correction pass** to
 
 An admin can enter keys once for everyone under **Admin, Server defaults**.
 
+Where to get a key for each service, step by step, is in [deploy/yunohost.md, section 4](deploy/yunohost.md#4-keys-for-the-ai-services). Section 5 of the same file covers email, with Gmail as a worked example.
+
 Published benchmarks disagree on which engine is the most accurate, and none of them used ring recordings. The Test page is there to answer the question with your own voice and your own microphone.
 
 ### Getting the best accuracy

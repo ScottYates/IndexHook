@@ -1,5 +1,7 @@
 # IndexHook on YunoHost
 
+Sections 4 (keys for the AI services) and 5 (email, with Gmail as an example) apply to any install, not only YunoHost.
+
 This is a manual install. It has not been tested on a YunoHost server yet, and it is not a YunoHost package. The steps use only standard parts: a systemd service and the Redirect app.
 
 ## 1. Install the service
@@ -43,18 +45,116 @@ Open `https://example.org/indexhook/` and create the first account. It becomes t
 
 Under **Admin, Server**, set **Public address** to `https://example.org/indexhook` if the webhook URL shown on the Overview page is not right.
 
-## 4. Email
+## 4. Keys for the AI services
 
-YunoHost runs its own mail server. Under **Admin, Server defaults, Email** set:
+You need a key for at least one speech service. Each person can paste their own keys under **Settings, AI services**. An admin can instead paste keys once under **Admin, Server defaults**, and every user then uses them without being able to read them.
+
+After pasting a key, press **Save and test**. The page reports for each service whether the key works.
+
+Every service below shows a new key only once, at the moment it is created. Copy it straight into IndexHook. Menu names on these sites change from time to time; the addresses are the stable part.
+
+### MiniMax (speech, and optionally the correction pass)
+
+1. Sign in at <https://platform.minimax.io>.
+2. Open **API Keys** and choose **Create new secret key**. Direct link: <https://platform.minimax.io/user-center/basic-information/interface-key>
+3. Add credit under **Billing, Balance** if the balance is zero.
+4. Paste the key into **MiniMax API key**.
+
+MiniMax has two kinds of key, and they are not interchangeable. Use the pay-as-you-go **API key** described above; MiniMax documents it as covering all models including speech. The other kind, the **Subscription Key** of a Token Plan, draws on a subscription quota, and this guide has not confirmed that it covers speech recognition. If the test answers "the key was not accepted" or "the account has no credit", check which kind of key you pasted and whether the balance is above zero.
+
+Accounts on the China platform (platform.minimaxi.com) also set **Advanced, MiniMax base URL** to `https://api.minimaxi.com/v1`.
+
+### Google Gemini (speech)
+
+1. Sign in at <https://aistudio.google.com/apikey> with a Google account.
+2. Choose **Create API key**. Pick an existing Google Cloud project or let AI Studio create one.
+3. Paste the key into **Google Gemini API key**.
+
+A key works without a billing account inside the free tier's rate limits. Two things to know about the free tier: in some regions, including much of Europe, the API reportedly does not work until billing is enabled on the project, and Google may use free-tier data to improve its products. Enable billing on the project (AI Studio links to it) if either matters to you.
+
+### OpenAI (speech, and optionally the correction pass)
+
+1. Sign in at <https://platform.openai.com>.
+2. Add credit under **Settings, Billing**. The API is billed separately from a ChatGPT subscription.
+3. Open <https://platform.openai.com/api-keys> and choose **Create new secret key**.
+4. Paste the key into **OpenAI API key**.
+
+### Claude (correction pass only)
+
+1. Sign in to the Claude Console at <https://platform.claude.com>, or create an account.
+2. Make sure the organization has credit. Buy credits on the Billing page (<https://platform.claude.com/settings/billing>). Claude Max, Ultra and Team plans include monthly API credits: claim them on claude.ai under **Settings, Billing, API credits** by linking the Console organization. A Claude subscription does not otherwise pay for API use.
+3. Open the API keys page (<https://platform.claude.com/settings/keys>) and choose **Create key**.
+   - Expiration: choose **Never**, or note the date. An expired key makes the correction pass fail (the transcript from the speech engine is still used).
+   - Workspace: select one, for example the default workspace. A key that is not tied to a workspace needs the workspace ID sent with every request; in that case paste the ID (it starts with `wrkspc_`) into **Advanced, Claude workspace ID**.
+4. Paste the key (it starts with `sk-ant-`) into **Claude API key**, and set **Correction pass** to Claude.
+
+### ElevenLabs (speech)
+
+1. Sign in at <https://elevenlabs.io> and open <https://elevenlabs.io/app/developers/api-keys>.
+2. Choose **Create Key** and give it a name.
+3. If you restrict the key's permissions, give **Speech to Text** access. A restricted key with no permissions does not work.
+4. Paste the key into **ElevenLabs API key**.
+
+### Deepgram (speech)
+
+1. Sign in at <https://console.deepgram.com>.
+2. In your project, open **Settings, API Keys** and choose **Create a New API Key**. The Member role is enough.
+3. Paste the key into **Deepgram API key**.
+
+### Groq (speech, hosted Whisper)
+
+1. Sign in at <https://console.groq.com> and open <https://console.groq.com/keys>.
+2. Choose **Create API Key** and give it a name.
+3. Paste the key into **Groq API key**.
+
+### Which key is used
+
+With **Engine** set to Automatic, the first service in this order that has a key transcribes: MiniMax, Google, OpenAI, ElevenLabs, Deepgram, Groq, own server. To use a specific one, choose it under **Speech to text, Engine**. A second service can be set as **Cross-check engine**.
+
+## 5. Email
+
+Email is how the starter rules deliver notes. Set it per user under **Settings, Email**, or once for everyone under **Admin, Server defaults, Email**. **Save and test** sends a test message.
+
+### Option A: YunoHost's own mail server
+
+YunoHost runs a mail server on the same machine:
 
 - SMTP server: `localhost`
 - SMTP port: `25`
 - Encryption: None
+- SMTP user and password: leave blank
 - From address: an address on one of your YunoHost domains
 
-Every user then gets working email without entering anything.
+### Option B: Gmail
 
-## 5. Single sign-on (optional)
+Gmail accepts SMTP logins only with an app password (or OAuth, which IndexHook does not use). Your normal Google password does not work here.
+
+1. Turn on 2-Step Verification for the Google account: <https://myaccount.google.com/security>. App passwords are not offered without it.
+2. Open <https://myaccount.google.com/apppasswords>, enter a name such as "IndexHook", and create the password. Google shows 16 letters in four groups.
+3. In IndexHook, set:
+
+   | Field | Value |
+   | --- | --- |
+   | Send notes to | the address the notes should arrive at (can be the same Gmail address) |
+   | SMTP server | `smtp.gmail.com` |
+   | SMTP port | `587` |
+   | Encryption | STARTTLS |
+   | SMTP user | your full Gmail address |
+   | SMTP password | the 16 letters, typed without the spaces |
+   | From address | leave blank (the SMTP user is used) |
+
+   Port `465` with Encryption set to SSL/TLS works as well.
+4. Press **Save and test** and check that the test message arrives.
+
+Notes on Gmail:
+
+- The app password page is missing when 2-Step Verification is off, when the account uses only security keys for it, when Advanced Protection is on, or when a Google Workspace admin has disabled app passwords.
+- Gmail sends as the account that logged in. A different From address is replaced unless it is set up as a "Send mail as" alias in Gmail.
+- "SMTP login failed" in the test result means Gmail refused the user name or password. The usual causes are the normal password in place of an app password, or a revoked app password. Changing the Google account password revokes all app passwords.
+- A personal Gmail account may send about 500 messages a day, which is far more than notes need.
+- If the account holds anything sensitive, a separate Gmail account used only for sending keeps the app password's reach small. An app password gives full mail access to its account.
+
+## 6. Single sign-on (optional)
 
 YunoHost's SSO layer (SSOwat) adds the headers `Ynh-User` and `Ynh-User-Email` to requests from people who are logged in to the portal. To let those people into IndexHook without a second password, set under **Admin, Reverse proxy login**:
 
@@ -77,7 +177,7 @@ Things to check on your server before relying on this:
 
 A YunoHost account that matches an existing IndexHook user name logs in as that user. Name the first admin account after your YunoHost user for that reason.
 
-## 6. The ring
+## 7. The ring
 
 Use the `X-Hook-Token` header in the Pebble app (see the README). SSOwat can alter `Authorization` headers on their way to an app, and `X-Hook-Token` is not affected.
 

@@ -325,7 +325,10 @@ def test_claude_correction_pass(client, world, smtp, tone):
     call = world.to("api.anthropic.com")[0]
     assert call["path"] == "/v1/messages"
     assert call["headers"]["x-api-key"] == "sk-ant-test" and call["headers"]["anthropic-version"] == "2023-06-01"
-    assert "authorization" not in call["headers"]
+    assert "authorization" not in call["headers"] and "anthropic-workspace-id" not in call["headers"]
+    set_user(client, uid, claude_workspace_id="wrkspc_01ABC")
+    wait_done(client, ring_post(client, token, tone, recorded_at=77).json()["id"])
+    assert world.to("api.anthropic.com")[1]["headers"]["anthropic-workspace-id"] == "wrkspc_01ABC"
     body = json.loads(call["body"])
     assert body["model"] == "claude-haiku-5-5" and body["max_tokens"] == 1024
     assert "fix speech recognition errors" in body["system"]

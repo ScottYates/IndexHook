@@ -385,7 +385,9 @@ async def chat(client, s: Settings, provider: str, system: str, user: str) -> st
             s.get("claude_base_url").rstrip("/") + "/v1/messages",
             json={"model": s.get("claude_model"), "max_tokens": 1024, "system": system,
                   "messages": [{"role": "user", "content": user}]},
-            headers={"x-api-key": s.get("claude_api_key"), "anthropic-version": "2023-06-01"})
+            headers={"x-api-key": s.get("claude_api_key"), "anthropic-version": "2023-06-01",
+                     **({"anthropic-workspace-id": s.get("claude_workspace_id")}
+                        if s.get("claude_workspace_id") else {})})
         _check(r, "claude")
         try:
             out = "".join(b.get("text", "") for b in r.json()["content"] if b.get("type") == "text")
